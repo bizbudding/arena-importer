@@ -14,82 +14,6 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 /**
- * Import and/or select author and set the post author.
- *
- * @param int $post_id The post ID.
- *
- * @return void
- */
-add_action( 'pmxi_saved_post', function( $post_id ) {
-
-	// DISABLED.
-	return;
-
-	// Default user ID.
-	$user_id = 0;
-
-	// Get the author from the post meta.
-	$author_name = get_post_meta( $post_id, 'arena_author', true );
-
-	// Bail if no author name is found.
-	if ( ! $author_name ) {
-		return;
-	}
-
-	// Sanitize the author name for username.
-	$username = sanitize_title( $author_name );
-
-	// Check if user already exists.
-	$user = get_user_by( 'login', $username );
-
-	// If no user.
-	if ( ! $user ) {
-		// Get the site domain.
-		$site_url = home_url();
-		$domain   = parse_url( $site_url, PHP_URL_HOST );
-
-		// Check if it's a mai-cloud.net domain and extract the main domain.
-		if ( str_ends_with( $domain, '.mai-cloud.net' ) ) {
-			// Extract the subdomain (jamiegeller from jamiegeller.mai-cloud.net).
-			$subdomain = str_replace( '.mai-cloud.net', '', $domain );
-			$domain    = $subdomain . '.com';
-		} else {
-			// Handle other subdomains by getting the main domain.
-			$domain_parts = explode( '.', $domain );
-			if ( count( $domain_parts ) > 2 ) {
-				$domain = $domain_parts[ count( $domain_parts ) - 2 ] . '.' . $domain_parts[ count( $domain_parts ) - 1 ];
-			}
-		}
-
-		// Build the email.
-		$email = sprintf( '%s@%s', sanitize_key( $username ), $domain );
-
-		// Create new user.
-		$new_user_id = wp_insert_user( [
-			'user_login'    => $username,
-			'user_pass'     => wp_generate_password(),
-			'user_email'    => $email,
-			'user_nicename' => sanitize_title( $author_name ),
-			'display_name'  => $author_name,
-			'role'          => 'author',
-		] );
-
-		// If user was created.
-		if ( ! is_wp_error( $new_user_id ) ) {
-			$user_id = $new_user_id;
-		}
-	} else {
-		$user_id = $user->ID;
-	}
-
-	// Update the post author.
-	wp_update_post( [
-		'ID'          => $post_id,
-		'post_author' => $user_id,
-	] );
-} );
-
-/**
  * Set post type.
  *
  * @param int $post_id The post ID.
@@ -219,6 +143,7 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 } );
 
 /**
+ * Set user avatar.
  *
  * @param int $user_id The post ID.
  *
@@ -264,6 +189,42 @@ add_action( 'pmxi_saved_post', function( $user_id ) {
 
 	return;
 } );
+
+/**
+ * Delete unused recipe meta.
+ *
+ * @param int $post_id The post ID.
+ *
+ * @return void
+ */
+add_action( 'pmxi_saved_post', function( $post_id ) {
+	$keys = [
+		'recipe_instructions_html',
+		'recipe_prep_time_minutes',
+		'recipe_cook_time_minutes',
+		'recipe_total_time_minutes',
+		'recipe_yield_description',
+		'recipe_exclusive_content_type',
+		'recipe_ingredients',
+		'recipe_nutrition',
+		'recipe_categories',
+		'recipe_cuisine',
+		'recipe_cooking_method',
+		'recipe_suitable_for_diet',
+	];
+
+	foreach ( $keys as $key ) {
+		$value = get_post_meta( $post_id, $key, true );
+
+		// Bail if we have a value.
+		if ( $value  && '{}' !== $value && '[]' !== $value ) {
+			continue;
+		}
+
+		// Delete the meta.
+		delete_post_meta( $post_id, $key );
+	}
+});
 
 /**
  * Function handles downloading a remote file and inserting it into the WP Media Library.
