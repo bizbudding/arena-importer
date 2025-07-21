@@ -4,7 +4,7 @@
  * Plugin Name:     Arena Importer
  * Plugin URI:      https://bizbudding.com/
  * Description:     Import posts via WP All Import Pro and recipes to WP Recipe Maker from Arena's export files.
- * Version:         0.1.0
+ * Version:         0.2.0
  *
  * Author:          BizBudding
  * Author URI:      https://bizbudding.com
@@ -422,3 +422,117 @@ add_filter( 'wprm_importer_directories', function( $directories ) {
 // 	}
 // 	wp_reset_postdata();
 // });
+
+// /**
+//  * Add recipe block to any recipe that doesn't have it.
+//  *
+//  * @since 0.1.0
+//  *
+//  * @return void
+//  */
+// add_action( 'genesis_before_loop', function() {
+// 	/**
+// 	 * Prevent post_modified update.
+// 	 *
+// 	 * @param array $data                An array of slashed, sanitized, and processed post data.
+// 	 * @param array $postarr             An array of sanitized (and slashed) but otherwise unmodified post data.
+// 	 * @param array $unsanitized_postarr An array of slashed yet *unsanitized* and unprocessed post data as originally passed to wp_insert_post() .
+// 	 * @param bool  $update              Whether this is an existing post being updated.
+// 	 *
+// 	 * @return array
+// 	 */
+// 	add_filter( 'wp_insert_post_data', function( $data, $postarr, $unsanitized_postarr, $update ) {
+// 		if ( $update && ! empty( $postarr['ID'] ) ) {
+// 			// Get the existing post.
+// 			$existing = get_post( $postarr['ID'] );
+
+// 			// Preserve the current modified dates.
+// 			if ( $existing ) {
+// 				$data['post_modified']     = $existing->post_modified;
+// 				$data['post_modified_gmt'] = $existing->post_modified_gmt;
+// 			}
+// 		}
+
+// 		return $data;
+
+// 	}, 10, 4 );
+
+// 	$query = new WP_Query( [
+// 		'post_type'              => 'wprm_recipe',
+// 		'posts_per_page'         => 200,
+// 		'offset'                 => 0,
+// 		'fields'                 => 'ids',
+// 		'no_found_rows'          => true,
+// 		'update_post_meta_cache' => false,
+// 		'update_post_term_cache' => false,
+// 	] );
+
+// 	if ( $query->have_posts() ) {
+// 		while ( $query->have_posts() ) : $query->the_post();
+// 			$recipe_id = get_the_ID();
+// 			$parent_id = get_post_meta( $recipe_id, 'wprm_parent_post_id', true );
+
+// 			if ( ! $parent_id ) {
+// 				$wprm_import_backup = get_post_meta( $recipe_id, 'wprm_import_backup', true );
+// 				$parent_id          = $wprm_import_backup['example_recipe_id'];
+// 			}
+
+// 			printf( '<p>%s</p>', print_r( $parent_id . ' - ' . get_the_title( $parent_id ), true ) );
+
+// 			if ( ! $parent_id ) {
+// 				continue;
+// 			}
+
+// 			// Get the post.
+// 			$post = get_post( $parent_id );
+
+// 			// Bail if we don't have a post.
+// 			if ( ! $post ) {
+// 				continue;
+// 			}
+
+// 			// Get the post content.
+// 			$content = $post->post_content;
+
+// 			// printf( '<pre>%s</pre>', esc_html( print_r( $content, true ) ) );
+
+// 			// Bail if we already have a WPRM recipe.
+// 			if ( str_contains( $content, '[wprm-recipe id="' . $recipe_id . '"]' ) || str_contains( $content, 'wp:wp-recipe-maker/recipe {"id":' . $recipe_id . '}' ) ) {
+// 				printf( '<p>%s</p>', print_r( 'Already has recipe block', true ) );
+
+// 				continue;
+// 			}
+
+// 			// Add the WPRM block.
+// 			$content .= arena_get_recipe_block( $recipe_id );
+
+// 			// Update the post content.
+// 			wp_update_post( [
+// 				'ID'           => $parent_id,
+// 				'post_content' => $content,
+// 			] );
+
+// 			printf( '<p>%s</p>', print_r( 'Updated post content - ' . $parent_id . ' - ' . get_permalink( $parent_id ), true ) );
+// 		endwhile;
+// 	} else {
+// 		printf( '<pre>%s</pre>', print_r( 'No recipes found', true ) );
+// 	}
+// 	wp_reset_postdata();
+// });
+
+/**
+ * Get the recipe block.
+ * This was taken from the WPRM importer class.
+ *
+ * @param int $id The ID of the recipe.
+ *
+ * @return string
+ */
+function arena_get_recipe_block( $id ) {
+	$html  = '';
+	$html .= '<!-- wp:wp-recipe-maker/recipe {"id":' . $id . '} -->';
+	$html .= '[wprm-recipe id="' . $id . '"]';
+	$html .= '<!-- /wp:wp-recipe-maker/recipe -->';
+
+	return $html;
+}

@@ -466,7 +466,7 @@ class WPRM_Import_Arena extends WPRM_Import {
 		$content = $post->post_content;
 
 		// Bail if we already have a WPRM recipe.
-		if ( str_contains( $content, '[wprm-recipe id="' . $id . '"]' ) ) {
+		if ( str_contains( $content, '[wprm-recipe id="' . $id . '"]' ) || str_contains( $content, 'wp:wp-recipe-maker/recipe {"id":' . $id . '}' ) ) {
 			return;
 		}
 
