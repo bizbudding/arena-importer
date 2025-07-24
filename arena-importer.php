@@ -4,7 +4,7 @@
  * Plugin Name:     Arena Importer
  * Plugin URI:      https://bizbudding.com/
  * Description:     Import posts via WP All Import Pro and recipes to WP Recipe Maker from Arena's export files.
- * Version:         0.3.0
+ * Version:         0.4.0
  *
  * Author:          BizBudding
  * Author URI:      https://bizbudding.com
@@ -38,46 +38,6 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 		'ID'          => $post_id,
 		'post_type'   => $post_type,
 	] );
-} );
-
-/**
- * Set attachment alt/caption.
- *
- * @param int $post_id The post ID.
- *
- * @return void
- */
-add_action( 'pmxi_saved_post', function( $post_id ) {
-	// Bail if not a post.
-	if ( ! get_post( $post_id ) ) {
-		return;
-	}
-
-	// Bail if not an attachment.
-	if ( 'attachment' !== get_post_type( $post_id ) ) {
-		return;
-	}
-
-	$caption  = get_post_meta( $post_id, 'arena_caption', true );
-	$alt_text = get_post_meta( $post_id, 'arena_alt_text', true );
-
-	// Bail if no caption or alt text is found.
-	if ( ! ( $caption || $alt_text ) ) {
-		return;
-	}
-
-	// If we have a caption, update the attachment caption.
-	if ( $caption ) {
-		wp_update_post( [
-			'ID'           => $post_id,
-			'post_excerpt' => $caption,
-		] );
-	}
-
-	// If we have an alt text, update the attachment alt text.
-	if ( $alt_text ) {
-		update_post_meta( $post_id, '_wp_attachment_image_alt', $alt_text );
-	}
 } );
 
 /**
