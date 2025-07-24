@@ -4,7 +4,7 @@
  * Plugin Name:     Arena Importer
  * Plugin URI:      https://bizbudding.com/
  * Description:     Import posts via WP All Import Pro and recipes to WP Recipe Maker from Arena's export files.
- * Version:         0.4.0
+ * Version:         0.5.0
  *
  * Author:          BizBudding
  * Author URI:      https://bizbudding.com
@@ -61,7 +61,7 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 	}
 
 	// Explode the categories by comma.
-	$categories = explode( ',', $categories );
+	$categories = explode( '|', $categories );
 
 	// Remove empty values.
 	$categories = array_filter( $categories );
@@ -73,7 +73,7 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 	$term_ids = [];
 
 	foreach ( $categories as $category ) {
-		$term = get_term_by( 'name', $category, 'category' );
+		$term = get_term_by( 'slug', $category, 'category' );
 
 		if ( ! $term ) {
 			continue;
@@ -112,7 +112,7 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 	}
 
 	// Explode the tags by comma.
-	$tags = explode( ',', $tags );
+	$tags = explode( '|', $tags );
 
 	// Remove empty values.
 	$tags = array_filter( $tags );
@@ -124,7 +124,7 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 	$term_ids = [];
 
 	foreach ( $tags as $tag ) {
-		$term = get_term_by( 'name', $tag, 'post_tag' );
+		$term = get_term_by( 'slug', $tag, 'post_tag' );
 
 		if ( ! $term ) {
 			continue;
@@ -536,3 +536,58 @@ function arena_get_recipe_block( $id ) {
 
 	return $html;
 }
+
+function arena_write_to_file( $value ) {
+	/**
+	 * This function for testing & debuggin only.
+	 * Do not leave this function working on your site.
+	 */
+	$file   = dirname( __FILE__ ) . '/__data.txt';
+	$handle = fopen( $file, 'a' );
+	ob_start();
+	if ( is_array( $value ) || is_object( $value ) ) {
+		print_r( $value );
+	} elseif ( is_bool( $value ) ) {
+		var_dump( $value );
+	} else {
+		echo $value;
+	}
+	echo "\r\n\r\n";
+	fwrite( $handle, ob_get_clean() );
+	fclose( $handle );
+}
+
+/**
+ */
+// add_action( 'genesis_before_loop', function() {
+
+// 	if ( ! current_user_can( 'manage_options' ) ) {
+// 		return;
+// 	}
+
+// 	$query = new WP_Query( [
+// 		'post_type'              => 'post',
+// 		'posts_per_page'         => 200,
+// 		'offset'                 => 0,
+// 		'no_found_rows'          => true,
+// 		'update_post_meta_cache' => false,
+// 		'update_post_term_cache' => false,
+// 		'meta_query'             => [
+// 			[
+// 				'key'     => 'arena_categories',
+// 				'compare' => 'EXISTS',
+// 			],
+// 		],
+// 	] );
+
+// 	if ( $query->have_posts() ) {
+// 		while ( $query->have_posts() ) : $query->the_post();
+// 			$post_id    = get_the_ID();
+// 			$categories = get_post_meta( $post_id, 'arena_categories', true );
+
+// 			printf( '<p>%s</p>', print_r( $post_id . ' - ' . $categories, true ) );
+
+// 		endwhile;
+// 	}
+// 	wp_reset_postdata();
+// });
