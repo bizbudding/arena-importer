@@ -145,14 +145,17 @@ class WPArena_CLI_Command {
 	 * [--dry-run]
 	 * : Show what would be done without making changes.
 	 *
-	 * [--offset=<number>]
-	 * : Start from this offset (default: 0).
+	 * [--post_type=<type>]
+	 * : Post type to process (default: post).
+	 *
+	 * [--post_status=<status>]
+	 * : Post status to process (default: any).
 	 *
 	 * [--per_page=<number>]
 	 * : Number of posts to process per batch (default: 50).
 	 *
-	 * [--post_status=<status>]
-	 * : Post status to process (default: any).
+	 * [--offset=<number>]
+	 * : Start from this offset (default: 0).
 	 *
 	 * ## EXAMPLES
 	 *
