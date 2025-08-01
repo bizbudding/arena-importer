@@ -31,7 +31,7 @@ class WPArena_CLI_Command {
 	 *
 	 * @subcommand dedupe-media
 	 */
-		public function dedupe_media( $args, $assoc_args ) {
+	public function dedupe_media( $args, $assoc_args ) {
 		$dry_run = isset( $assoc_args['dry-run'] );
 
 		WP_CLI::log( "Loading all attachments..." );
@@ -166,9 +166,10 @@ class WPArena_CLI_Command {
 	 */
 	public function set_arena_featured_image( $args, $assoc_args ) {
 		$dry_run     = isset( $assoc_args['dry-run'] );
-		$offset      = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
-		$per_page    = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 20;
+		$post_type   = isset( $assoc_args['post_type']) ? (int) $assoc_args['post_type'] : 'post';
 		$post_status = isset( $assoc_args['post_status'] ) ? $assoc_args['post_status'] : 'any';
+		$per_page    = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 20;
+		$offset      = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
 
 		// Validate post status
 		$valid_statuses = ['any', 'publish', 'draft', 'pending', 'private', 'trash'];
@@ -178,10 +179,10 @@ class WPArena_CLI_Command {
 
 		$query = new WP_Query(
 			[
-				'post_type'              => 'post',
+				'post_type'              => $post_type,
+				'post_status'            => $post_status,
 				'posts_per_page'         => $per_page,
 				'offset'                 => $offset,
-				'post_status'            => $post_status,
 				'no_found_rows'          => true,
 				'update_post_meta_cache' => false,
 				'update_post_term_cache' => false,
