@@ -9,6 +9,126 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 
 class WPArena_CLI_Command {
 	/**
+	 * Find attachments that don't have associated files.
+	 *
+	 * This command scans all attachments and checks if their associated files exist on disk.
+	 * It can optionally delete these orphaned attachments.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--dry-run]
+	 * : Only list orphaned attachments. No changes will be made.
+	 *
+	 * [--offset=<number>]
+	 * : Start from this offset (default: 0).
+	 *
+	 * [--per_page=<number>]
+	 * : Number of attachments to process per batch (default: 100).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Preview orphaned attachments without deleting.
+	 *     wp arena find-orphaned-attachments --dry-run
+	 *
+	 *     # Actually delete orphaned attachments.
+	 *     wp arena find-orphaned-attachments
+	 *
+	 *     # Process in batches with offset.
+	 *     wp arena find-orphaned-attachments --offset=1000 --per_page=50
+	 *
+	 * @subcommand find-orphaned-attachments
+	 * @param array $args
+	 * @param array $assoc_args
+	 */
+	public function find_orphaned_attachments( $args, $assoc_args ) {
+		$dry_run  = isset( $assoc_args['dry-run'] );
+		$offset   = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
+		$per_page = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
+
+		WP_CLI::log( "Loading attachments..." );
+
+		$attachments = get_posts([
+			'post_type'      => 'attachment',
+			'posts_per_page' => $per_page,
+			'offset'         => $offset,
+			'fields'         => 'ids',
+			'orderby'        => 'ID',
+			'order'          => 'ASC',
+		]);
+
+		WP_CLI::log( sprintf( "Found %d attachments starting from offset %d. Processing...", count( $attachments ), $offset ) );
+
+		if ( empty( $attachments ) ) {
+			WP_CLI::success( 'No attachments found.' );
+			return;
+		}
+
+		// Initialize counters
+		$processed = 0;
+		$orphaned  = 0;
+		$skipped   = 0;
+		$errors    = 0;
+
+		foreach ( $attachments as $attachment_id ) {
+			$processed++;
+
+			try {
+				$file_path = get_attached_file( $attachment_id );
+
+				// Check if file path is associated and if file exists on disk
+				if ( ! $file_path || ! file_exists( $file_path ) ) {
+					$orphaned++;
+					$attachment = get_post( $attachment_id );
+					$title = $attachment ? $attachment->post_title : 'Unknown';
+					$url = wp_get_attachment_url( $attachment_id );
+
+					WP_CLI::log( sprintf( 'Found orphaned attachment %d: %s', $attachment_id, $title ) );
+					if ( ! $file_path ) {
+						WP_CLI::log( sprintf( '  No file path associated' ) );
+					} else {
+						WP_CLI::log( sprintf( '  File path: %s (file does not exist)', $file_path ) );
+					}
+					WP_CLI::log( sprintf( '  URL: %s', $url ) );
+
+					// Delete the orphaned attachment if not in dry run mode
+					if ( ! $dry_run ) {
+						$result = wp_delete_attachment( $attachment_id, true );
+						if ( $result ) {
+							WP_CLI::success( sprintf( 'Deleted orphaned attachment %d', $attachment_id ) );
+						} else {
+							$errors++;
+							WP_CLI::warning( sprintf( 'Failed to delete orphaned attachment %d', $attachment_id ) );
+						}
+					} else {
+						WP_CLI::log( sprintf( '[Dry run] Would delete orphaned attachment %d', $attachment_id ) );
+					}
+				} else {
+					$skipped++;
+					// WP_CLI::log( sprintf( 'Skipped attachment %d: File exists', $attachment_id ) );
+				}
+
+			} catch ( Exception $e ) {
+				$errors++;
+				WP_CLI::warning( sprintf( 'Error processing attachment %d: %s', $attachment_id, $e->getMessage() ) );
+			}
+		}
+
+		// Show summary
+		WP_CLI::log( '' );
+		WP_CLI::log( '=== Summary ===' );
+		WP_CLI::log( sprintf( 'Processed: %d attachments', $processed ) );
+		WP_CLI::log( sprintf( 'Orphaned: %d attachments', $orphaned ) );
+		WP_CLI::log( sprintf( 'Skipped: %d attachments', $skipped ) );
+		WP_CLI::log( sprintf( 'Errors: %d attachments', $errors ) );
+
+		if ( $dry_run ) {
+			WP_CLI::success( sprintf( 'Dry run completed. Found %d orphaned attachments. Use --dry-run=false to delete them.', $orphaned ) );
+		} else {
+			WP_CLI::success( sprintf( 'Completed! Deleted %d orphaned attachments.', $orphaned ) );
+		}
+	}
+
+	/**
 	 * Delete duplicate image attachments with numbered filenames (e.g., `image-1.jpg`, `photo-2.webp`).
 	 *
 	 * This command scans the `attachment` post type for filenames that match the pattern `-<number>.<ext>`,
@@ -145,17 +265,14 @@ class WPArena_CLI_Command {
 	 * [--dry-run]
 	 * : Show what would be done without making changes.
 	 *
-	 * [--post_type=<type>]
-	 * : Post type to process (default: post).
-	 *
-	 * [--post_status=<status>]
-	 * : Post status to process (default: any).
+	 * [--offset=<number>]
+	 * : Start from this offset (default: 0).
 	 *
 	 * [--per_page=<number>]
 	 * : Number of posts to process per batch (default: 50).
 	 *
-	 * [--offset=<number>]
-	 * : Start from this offset (default: 0).
+	 * [--post_status=<status>]
+	 * : Post status to process (default: any).
 	 *
 	 * ## EXAMPLES
 	 *
@@ -169,10 +286,9 @@ class WPArena_CLI_Command {
 	 */
 	public function set_arena_featured_image( $args, $assoc_args ) {
 		$dry_run     = isset( $assoc_args['dry-run'] );
-		$post_type   = isset( $assoc_args['post_type']) ? (int) $assoc_args['post_type'] : 'post';
-		$post_status = isset( $assoc_args['post_status'] ) ? $assoc_args['post_status'] : 'any';
-		$per_page    = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 20;
 		$offset      = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
+		$per_page    = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 20;
+		$post_status = isset( $assoc_args['post_status'] ) ? $assoc_args['post_status'] : 'any';
 
 		// Validate post status
 		$valid_statuses = ['any', 'publish', 'draft', 'pending', 'private', 'trash'];
@@ -182,10 +298,10 @@ class WPArena_CLI_Command {
 
 		$query = new WP_Query(
 			[
-				'post_type'              => $post_type,
-				'post_status'            => $post_status,
+				'post_type'              => 'post',
 				'posts_per_page'         => $per_page,
 				'offset'                 => $offset,
+				'post_status'            => $post_status,
 				'no_found_rows'          => true,
 				'update_post_meta_cache' => false,
 				'update_post_term_cache' => false,
