@@ -235,6 +235,8 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
  *
  * Applies only to images downloaded by WP All Import.
  *
+ * @link https://www.wpallimport.com/documentation/code-snippets/#save-imported-images-to-a-folder-based-on-the-post-date
+ *
  * @param array $uploads           Contains information related to the WordPress uploads path & URL.
  * @param array $articleData       Contains a list of data related to the post/user/taxonomy being imported.
  * @param array $current_xml_node  Contains a list of nodes within the current import record.
@@ -242,47 +244,16 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
  *
  * @return array
  */
-add_filter( 'wp_all_import_attachments_uploads_dir', function( $uploads, $articleData, $current_xml_node, $import_id ) {
-	// Prefer mapped post_date; fall back to post_date_gmt if present.
-	$date = '';
-	if ( isset( $articleData['post_date'] ) && ! empty( $articleData['post_date'] ) && '0000-00-00 00:00:00' !== $articleData['post_date'] ) {
-		$date = $articleData['post_date'];
-	} elseif ( isset( $articleData['post_date_gmt'] ) && ! empty( $articleData['post_date_gmt'] ) && '0000-00-00 00:00:00' !== $articleData['post_date_gmt'] ) {
-		$date = $articleData['post_date_gmt'];
+add_filter('wp_all_import_images_uploads_dir', function( $uploads, $articleData, $current_xml_node, $import_id ) {
+	if ( ! empty($articleData['post_date'])) {
+		$uploads['path'] = $uploads['basedir'] . '/' . date( 'Y/m', strtotime( $articleData['post_date'] ) );
+		$uploads['url']  = $uploads['baseurl'] . '/' . date( 'Y/m', strtotime( $articleData['post_date'] ) );
+
+		if ( ! file_exists( $uploads['path'] ) ) {
+			mkdir( $uploads['path'], 0755, true );
+		}
 	}
-
-	// Bail if no usable date; WP All Import/WordPress will use the current month.
-	if ( empty( $date ) || '0000-00-00 00:00:00' === $date ) {
-		return $uploads;
-	}
-
-	// Convert the date to a timestamp.
-	$ts = strtotime( $date );
-
-	// Bail if the timestamp is invalid.
-	if ( ! $ts ) {
-		return $uploads;
-	}
-
-	// Build the subdirectory.
-	$subdir = sprintf( '/%s/%s', date( 'Y', $ts ), date( 'm', $ts ) );
-
-	// Get the base directory.
-	$basedir = untrailingslashit( $uploads['basedir'] );
-	$baseurl = untrailingslashit( $uploads['baseurl'] );
-
-	// Update the uploads directory.
-	$uploads['subdir'] = $subdir; // Keep WP conventions in case anything reads it.
-	$uploads['path']   = $basedir . $subdir;
-	$uploads['url']    = $baseurl . $subdir;
-
-	// Ensure the directory exists (handles nested dirs safely).
-	if ( ! is_dir( $uploads['path'] ) ) {
-		wp_mkdir_p( $uploads['path'] );
-	}
-
 	return $uploads;
-
 }, 10, 4 );
 
 /**
@@ -650,3 +621,42 @@ function arena_write_to_file( $value ) {
 // 	}
 // 	wp_reset_postdata();
 // });
+
+/**
+ * Register custom post types.
+ *
+ * @return void
+ */
+add_action( 'init', function() {
+
+	register_post_type( 'arena_item', [
+		'exclude_from_search' => false,
+		'has_archive'         => false,
+		'hierarchical'        => false,
+		'labels'              => [
+			'name'               => _x( 'Arena Items', 'Arena Item general name', 'arena-importer' ),
+			'singular_name'      => _x( 'Arena Item', 'Arena Item singular name', 'arena-importer' ),
+			'menu_name'          => _x( 'Arena Items', 'Arena Item admin menu', 'arena-importer' ),
+			'name_admin_bar'     => _x( 'Arena Item', 'Arena Item add new on admin bar', 'arena-importer' ),
+			'add_new'            => _x( 'Add New', 'Arena Item', 'arena-importer' ),
+			'add_new_item'       => __( 'Add New Arena Item',  'arena-importer' ),
+			'new_item'           => __( 'New Arena Item', 'arena-importer' ),
+			'edit_item'          => __( 'Edit Arena Item', 'arena-importer' ),
+			'view_item'          => __( 'View Arena Item', 'arena-importer' ),
+			'all_items'          => __( 'All Arena Items', 'arena-importer' ),
+			'search_items'       => __( 'Search Arena Items', 'arena-importer' ),
+			'parent_item_colon'  => __( 'Parent Arena Items:', 'arena-importer' ),
+			'not_found'          => __( 'No Arena Items found.', 'arena-importer' ),
+			'not_found_in_trash' => __( 'No Arena Items found in Trash.', 'arena-importer' )
+		],
+		'menu_icon'          => 'dashicons-welcome-widgets-menus',
+		'public'             => true,
+		'publicly_queryable' => true,
+		'show_in_menu'       => true,
+		'show_in_nav_menus'  => true,
+		'show_in_rest'       => true,
+		'show_ui'            => true,
+		'rewrite'            => false,
+		'supports'           => [ 'title', 'editor', 'thumbnail', 'page-attributes' ],
+	] );
+});
