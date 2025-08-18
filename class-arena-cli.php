@@ -9,7 +9,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 
 class WPArena_CLI_Command {
 	/**
-	 * Find attachments that don't have associated files.
+	 * Delete attachments that don't have associated files.
 	 *
 	 * This command scans all attachments and checks if their associated files exist on disk.
 	 * It can optionally delete these orphaned attachments.
@@ -28,19 +28,19 @@ class WPArena_CLI_Command {
 	 * ## EXAMPLES
 	 *
 	 *     # Preview orphaned attachments without deleting.
-	 *     wp arena find-orphaned-attachments --dry-run
+	 *     wp arena delete-orphaned-attachments --dry-run
 	 *
 	 *     # Actually delete orphaned attachments.
-	 *     wp arena find-orphaned-attachments
+	 *     wp arena delete-orphaned-attachments
 	 *
 	 *     # Process in batches with offset.
-	 *     wp arena find-orphaned-attachments --offset=1000 --per_page=50
+	 *     wp arena delete-orphaned-attachments --offset=1000 --per_page=50
 	 *
-	 * @subcommand find-orphaned-attachments
+	 * @subcommand delete-orphaned-attachments
 	 * @param array $args
 	 * @param array $assoc_args
 	 */
-	public function find_orphaned_attachments( $args, $assoc_args ) {
+	public function delete_orphaned_attachments( $args, $assoc_args ) {
 		$dry_run  = isset( $assoc_args['dry-run'] );
 		$offset   = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
 		$per_page = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
@@ -332,8 +332,10 @@ class WPArena_CLI_Command {
 						continue;
 					}
 
+					WP_CLI::log( sprintf( 'Post %d: Arena URL: %s', $post_id, $arena_url ) );
+
 					// Get image ID from arena URL
-					$image_id = $this->get_image_id_by_url( $arena_url );
+					$image_id = $this->get_image_id_by_url_internal( $arena_url );
 					if ( ! $image_id ) {
 						// Try to import the image
 						WP_CLI::log( sprintf( 'Post %d: No image found for URL %s, attempting to import...', $post_id, $arena_url ) );
@@ -397,91 +399,72 @@ class WPArena_CLI_Command {
 	}
 
 	/**
-	 * Get image ID by filename.
+	 * Get image ID by Arena URL.
 	 *
 	 * ## OPTIONS
 	 *
-	 * <filename>
-	 * : The filename to search for (e.g., 'image-filename')
+	 * <url>
+	 * : The Arena URL to search for
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     wp arena get-image-id-by-filename image-filename
+	 *     wp arena get-image-id-by-url "https://edm.com/.image/MjE2NzEzMjY1NjMwMTYwMjM5/image001.jpg"
 	 *
-	 * @subcommand get-image-id-by-filename
+	 * @subcommand get-image-id-by-url
 	 * @param array $args
 	 * @param array $assoc_args
 	 */
-	public function get_image_id_by_filename( $args, $assoc_args ) {
-		$filename = $args[0];
+	public function get_image_id_by_url( $args, $assoc_args ) {
+		$url = $args[0];
 
-		if ( empty( $filename ) ) {
-			WP_CLI::error( 'Please provide a filename.' );
+		if ( empty( $url ) ) {
+			WP_CLI::error( 'Please provide an Arena URL.' );
 		}
 
-		$image_id = $this->get_image_id_by_filename_internal( $filename );
+		$image_id = $this->get_image_id_by_url_internal( $url );
 
 		if ( $image_id ) {
 			$attachment = get_post( $image_id );
 			WP_CLI::success( sprintf( 'Found attachment ID: %d', $image_id ) );
 			WP_CLI::log( sprintf( 'Title: %s', $attachment->post_title ) );
 			WP_CLI::log( sprintf( 'File: %s', get_attached_file( $image_id ) ) );
+			WP_CLI::log( sprintf( 'Arena URL: %s', get_post_meta( $image_id, 'arena_attachment_url', true ) ) );
 		} else {
-			WP_CLI::warning( sprintf( 'No attachment found for filename: %s', $filename ) );
+			WP_CLI::warning( sprintf( 'No attachment found for Arena URL: %s', $url ) );
 		}
 
 		return $image_id;
 	}
 
 	/**
-	 * Get image ID by URL (internal helper method).
+	 * Get image ID by Arena URL (internal helper method).
 	 *
-	 * @param string $url The image URL to search for.
+	 * @param string $url The Arena URL to search for.
 	 * @return int|false The attachment ID or false if not found.
 	 */
-	private function get_image_id_by_url( $url ) {
+	private function get_image_id_by_url_internal( $url ) {
 		if ( empty( $url ) ) {
 			return false;
 		}
 
-		// Extract filename from URL.
-		$filename = basename( parse_url( $url, PHP_URL_PATH ) );
-		if ( empty( $filename ) ) {
-			return false;
-		}
-
-		// Remove extension from filename.
-		$filename = preg_replace( '/\.[^.]+$/', '', $filename );
-
-		return $this->get_image_id_by_filename_internal( $filename );
-	}
-
-	/**
-	 * Get image ID by filename (internal helper method).
-	 *
-	 * @param string $filename The filename to search for.
-	 * @return int|false The attachment ID or false if not found.
-	 */
-	private function get_image_id_by_filename_internal( $filename ) {
-		if ( empty( $filename ) ) {
-			return false;
-		}
-
+		// Search for attachment with matching arena_attachment_url meta
 		$query_args = [
 			'post_type'  => 'attachment',
 			'post_status'=> 'inherit',
+			'fields'     => 'ids',
 			'meta_query' => [
 				[
-					'key'     => '_wp_attached_file',
-					'value'   => $filename,
-					'compare' => 'LIKE',
+					'key'     => 'arena_attachment_url',
+					'value'   => $url,
+					'compare' => '=',
 				],
 			],
 			'posts_per_page' => 1,
 		];
 
 		$attachments = get_posts( $query_args );
-		return $attachments ? $attachments[0]->ID : false;
+
+		return $attachments && isset( $attachments[0] ) ? $attachments[0] : false;
 	}
 
 	/**
