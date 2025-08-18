@@ -4,7 +4,7 @@
  * Plugin Name:     Arena Importer
  * Plugin URI:      https://bizbudding.com/
  * Description:     Import posts via WP All Import Pro and recipes to WP Recipe Maker from Arena's export files.
- * Version:         0.8.0
+ * Version:         0.9.0
  *
  * Author:          BizBudding
  * Author URI:      https://bizbudding.com
@@ -228,6 +228,62 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 		delete_post_meta( $post_id, $key );
 	}
 });
+
+/**
+ * Force WP All Import to save attachments into uploads/{Y}/{m}
+ * based on the record's post_date (e.g., 2024-07-15 10:30:00).
+ *
+ * Applies only to images downloaded by WP All Import.
+ *
+ * @param array $uploads           Contains information related to the WordPress uploads path & URL.
+ * @param array $articleData       Contains a list of data related to the post/user/taxonomy being imported.
+ * @param array $current_xml_node  Contains a list of nodes within the current import record.
+ * @param int   $import_id         Contains the ID of the import.
+ *
+ * @return array
+ */
+add_filter( 'wp_all_import_attachments_uploads_dir', function( $uploads, $articleData, $current_xml_node, $import_id ) {
+	// Prefer mapped post_date; fall back to post_date_gmt if present.
+	$date = '';
+	if ( isset( $articleData['post_date'] ) && ! empty( $articleData['post_date'] ) && '0000-00-00 00:00:00' !== $articleData['post_date'] ) {
+		$date = $articleData['post_date'];
+	} elseif ( isset( $articleData['post_date_gmt'] ) && ! empty( $articleData['post_date_gmt'] ) && '0000-00-00 00:00:00' !== $articleData['post_date_gmt'] ) {
+		$date = $articleData['post_date_gmt'];
+	}
+
+	// Bail if no usable date; WP All Import/WordPress will use the current month.
+	if ( empty( $date ) || '0000-00-00 00:00:00' === $date ) {
+		return $uploads;
+	}
+
+	// Convert the date to a timestamp.
+	$ts = strtotime( $date );
+
+	// Bail if the timestamp is invalid.
+	if ( ! $ts ) {
+		return $uploads;
+	}
+
+	// Build the subdirectory.
+	$subdir = sprintf( '/%s/%s', date( 'Y', $ts ), date( 'm', $ts ) );
+
+	// Get the base directory.
+	$basedir = untrailingslashit( $uploads['basedir'] );
+	$baseurl = untrailingslashit( $uploads['baseurl'] );
+
+	// Update the uploads directory.
+	$uploads['subdir'] = $subdir; // Keep WP conventions in case anything reads it.
+	$uploads['path']   = $basedir . $subdir;
+	$uploads['url']    = $baseurl . $subdir;
+
+	// Ensure the directory exists (handles nested dirs safely).
+	if ( ! is_dir( $uploads['path'] ) ) {
+		wp_mkdir_p( $uploads['path'] );
+	}
+
+	return $uploads;
+
+}, 10, 4 );
 
 /**
  * Function handles downloading a remote file and inserting it into the WP Media Library.
