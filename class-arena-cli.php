@@ -81,8 +81,8 @@ class WPArena_CLI_Command {
 
 					// Loop through tags.
 					while ( $tags->next_tag( [ 'tag_name' => 'img' ] ) ) {
-						$class = (string) $tags->get_attribute( 'class' );
-						$src   = (string) $tags->get_attribute( 'src' );
+						// $class = (string) $tags->get_attribute( 'class' );
+						$src = (string) $tags->get_attribute( 'src' );
 
 						// // Skip if the image is already a WP image.
 						// if ( str_contains( $class, 'wp-image-' ) ) {
