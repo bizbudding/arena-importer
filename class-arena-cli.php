@@ -10,6 +10,110 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 class WPArena_CLI_Command {
 
 	/**
+	 * When importing, the _media_credit post meta was saved to the arena_item post type
+	 * instead of the attachment that was created during import.
+	 * This command migrates the media credits to the correct attachment post type.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--dry-run]
+	 * : Only list posts that would be updated. No changes will be made.
+	 *
+	 * [--offset=<number>]
+	 * : Start from this offset (default: 0).
+	 *
+	 * [--per_page=<number>]
+	 * : Number of posts to process per batch (default: 100).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Preview posts that would be updated without making changes.
+	 *     wp arena migrate-media-credits --per_page=1 --dry-run
+	 *
+	 *     # Actually update posts.
+	 *     wp arena migrate-media-credits --per_page=10
+	 *
+	 *     # Process in batches with offset.
+	 *     wp arena migrate-media-credits --per_page=50 --offset=1000
+	 *
+	 * @subcommand migrate-media-credits
+	 * @param array $args
+	 * @param array $assoc_args
+	 *
+	 * @return void
+	 */
+	public function migrate_media_credits( $args, $assoc_args ) {
+		$dry_run  = isset( $assoc_args['dry-run'] );
+		$offset   = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
+		$per_page = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
+
+		WP_CLI::log( "Loading posts..." );
+
+		try {
+			$query = new WP_Query([
+				'post_type'              => 'arena_item',
+				'post_status'            => 'any',
+				'posts_per_page'         => $per_page,
+				'offset'                 => $offset,
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => false,
+				'update_post_term_cache' => false,
+			]);
+
+			$processed_imgs = 0;
+			$skipped_imgs   = 0;
+
+			if ( $query->have_posts() ) {
+				WP_CLI::log( sprintf( "Found %d posts starting from offset %d. Processing...", $query->post_count, $offset ) );
+
+				while ( $query->have_posts() ) : $query->the_post();
+					global $post;
+
+					$media_credit = get_post_meta( $post->ID, '_media_credit', true );
+
+					if ( ! $media_credit ) {
+						$skipped_imgs++;
+						continue;
+					}
+
+					// Get post by parent id.
+					$attachments = get_posts([
+						'post_type'      => 'attachment',
+						'post_parent'    => $post->ID,
+						'posts_per_page' => 1,
+						'fields'         => 'ids',
+					]);
+
+					$attachment_id = $attachments[0] ?? false;
+
+					if ( ! $attachment_id ) {
+						$skipped_imgs++;
+						continue;
+					}
+
+					if ( ! $dry_run ) {
+						update_post_meta( $attachment_id, '_media_credit', $media_credit );
+						WP_CLI::log( sprintf( 'Updated attachment %d with media credit: %s %s', $attachment_id, $media_credit, get_permalink( $attachment_id ) ) );
+					} else {
+						WP_CLI::log( sprintf( 'Dry run: Would update attachment %d with media credit: %s %s', $attachment_id, $media_credit, get_permalink( $attachment_id ) ) );
+					}
+					$processed_imgs++;
+				endwhile;
+			} else {
+				WP_CLI::success( 'No posts found.' );
+			}
+			wp_reset_postdata();
+
+			WP_CLI::log( '' );
+			WP_CLI::log( '=== Summary ===' );
+			WP_CLI::log( sprintf( 'Processed images: %d', $processed_imgs ) );
+			WP_CLI::log( sprintf( 'Skipped images: %d', $skipped_imgs ) );
+		} catch ( Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	/**
 	 * Update content images.
 	 *
 	 * This command scans all posts and updates the content to add the `wp-image-{$image_id}` class to the images.
@@ -76,61 +180,95 @@ class WPArena_CLI_Command {
 					$post_id    = get_the_ID();
 					$html       = get_post_field( 'post_content', $post_id );
 
-					// Set up tag processor.
-					$tags = new WP_HTML_Tag_Processor( $html );
+					if ( has_blocks( $html ) ) {
+						// "blockName" => "core/image"
+						// "attrs" => array:2 [▼
+						//   "align" => "none"
+						//   "className" => "wp-image-857"
+						// ]
 
-					// Loop through tags.
-					while ( $tags->next_tag( [ 'tag_name' => 'img' ] ) ) {
-						// $class = (string) $tags->get_attribute( 'class' );
-						$src = (string) $tags->get_attribute( 'src' );
+						// "blockName" => "core/image"
+						// "attrs" => array:5 [▼
+						//   "id" => 857
+						//   "sizeSlug" => "large"
+						//   "linkDestination" => "none"
+						//   "align" => "none"
+						//   "className" => "wp-image-857"
+						// ]
 
-						// // Skip if the image is already a WP image.
-						// if ( str_contains( $class, 'wp-image-' ) ) {
-						// 	$skipped_imgs++;
-						// 	continue;
-						// }
+						$new_html = '';
 
-						// Skip if no src.
-						if ( empty( $src ) ) {
-							$skipped_imgs++;
-							continue;
+						$blocks = parse_blocks( $html );
+						foreach ( $blocks as $block ) {
+							// Skip if not an image block.
+							if ( 'core/image' !== $block['blockName'] ) {
+								$new_html .= render_block( $block );
+								continue;
+							}
+
+							$id   = $block['attrs']['id'] ?? null;
+							$slug = $block['attrs']['sizeSlug'] ?? null;
+
+							if ( ! $id ) {
+							}
+						}
+					} else {
+						// Set up tag processor.
+						$tags = new WP_HTML_Tag_Processor( $html );
+
+						// Loop through tags.
+						while ( $tags->next_tag( [ 'tag_name' => 'img' ] ) ) {
+							// $class = (string) $tags->get_attribute( 'class' );
+							$src = (string) $tags->get_attribute( 'src' );
+
+							// // Skip if the image is already a WP image.
+							// if ( str_contains( $class, 'wp-image-' ) ) {
+							// 	$skipped_imgs++;
+							// 	continue;
+							// }
+
+							// Skip if no src.
+							if ( empty( $src ) ) {
+								$skipped_imgs++;
+								continue;
+							}
+
+							// Get the image ID.
+							$image_id = attachment_url_to_postid( $src );
+
+							// Skip if no image ID.
+							if ( ! $image_id ) {
+								$skipped_imgs++;
+								continue;
+							}
+
+							// If we found an image, update the post.
+							$found_imgs[] = $image_id;
+
+							// Add the wp-image-{$image_id} class to the image.
+							$tags->add_class( 'wp-image-' . $image_id );
+
+							// Update src so it's not the full size.
+							$new_src = wp_get_attachment_image_url( $image_id, '2048x2048' );
+							$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, '1536x1536' );
+							$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, 'large' );
+
+							// If new src.
+							if ( $new_src ) {
+								$tags->set_attribute( 'src', $new_src );
+							}
+
+							// Some alt tags had weirdness, so this cleans it up.
+							$alt     = $tags->get_attribute( 'alt' );
+							$alt_esc = esc_attr( $alt );
+							if ( $alt !== $alt_esc ) {
+								$tags->set_attribute( 'alt', $alt_esc );
+							}
 						}
 
-						// Get the image ID.
-						$image_id = attachment_url_to_postid( $src );
-
-						// Skip if no image ID.
-						if ( ! $image_id ) {
-							$skipped_imgs++;
-							continue;
-						}
-
-						// If we found an image, update the post.
-						$found_imgs[] = $image_id;
-
-						// Add the wp-image-{$image_id} class to the image.
-						$tags->add_class( 'wp-image-' . $image_id );
-
-						// Update src so it's not the full size.
-						$new_src = wp_get_attachment_image_url( $image_id, '2048x2048' );
-						$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, '1536x1536' );
-						$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, 'large' );
-
-						// If new src.
-						if ( $new_src ) {
-							$tags->set_attribute( 'src', $new_src );
-						}
-
-						// Some alt tags had weirdness, so this cleans it up.
-						$alt     = $tags->get_attribute( 'alt' );
-						$alt_esc = esc_attr( $alt );
-						if ( $alt !== $alt_esc ) {
-							$tags->set_attribute( 'alt', $alt_esc );
-						}
+						// Get the updated HTML.
+						$html = $tags->get_updated_html();
 					}
-
-					// Get the updated HTML.
-					$html = $tags->get_updated_html();
 
 					// Update the post content if we found an image.
 					if ( ! empty( $found_imgs ) ) {
