@@ -8,6 +8,148 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 }
 
 class WPArena_CLI_Command {
+
+	/**
+	 * Update content images.
+	 *
+	 * This command scans all posts and updates the content to add the `wp-image-{$image_id}` class to the images.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--post_type=<post_type>]
+	 * : The post type to process. Default: 'post'.
+	 *
+	 * [--offset=<number>]
+	 * : Start from this offset (default: 0).
+	 *
+	 * [--per_page=<number>]
+	 * : Number of posts to process per batch (default: 100).
+	 *
+	 * [--dry-run]
+	 * : Only list posts that would be updated. No changes will be made.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Preview posts that would be updated without making changes.
+	 *     wp arena update-content-images --per_page=1 --dry-run
+	 *
+	 *     # Actually update posts.
+	 *     wp arena update-content-images --per_page=10
+	 *
+	 *     # Process in batches with offset.
+	 *     wp arena update-content-images --per_page=50 --offset=1000
+	 *
+	 * @subcommand update-content-images
+	 * @param array $args
+	 * @param array $assoc_args
+	 *
+	 * @return void
+	 */
+	public function update_content_images( $args, $assoc_args ) {
+		$post_type = isset( $assoc_args['post_type'] ) ? $assoc_args['post_type'] : 'post';
+		$offset    = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
+		$per_page  = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
+		$dry_run   = isset( $assoc_args['dry-run'] );
+
+		WP_CLI::log( "Loading posts..." );
+
+		try {
+			$query = new WP_Query([
+				'post_type'              => $post_type,
+				'posts_per_page'         => $per_page,
+				'offset'                 => $offset,
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => false,
+				'update_post_term_cache' => false,
+			]);
+
+			if ( $query->have_posts() ) {
+				WP_CLI::log( sprintf( "Found %d posts starting from offset %d. Processing...", $query->post_count, $offset ) );
+
+				$processed_posts = 0;
+				$processed_imgs  = 0;
+				$skipped_imgs    = 0;
+				$skipped_posts   = 0;
+
+				while ( $query->have_posts() ) : $query->the_post();
+					$found_imgs = [];
+					$post_id    = get_the_ID();
+					$html       = get_post_field( 'post_content', $post_id );
+
+					// Set up tag processor.
+					$tags = new WP_HTML_Tag_Processor( $html );
+
+					// Loop through tags.
+					while ( $tags->next_tag( [ 'tag_name' => 'img' ] ) ) {
+						$class = (string) $tags->get_attribute( 'class' );
+						$src   = (string) $tags->get_attribute( 'src' );
+
+						// Skip if the image is already a WP image.
+						if ( str_contains( $class, 'wp-image-' ) ) {
+							$skipped_imgs++;
+							continue;
+						}
+
+						// Skip if no src.
+						if ( empty( $src ) ) {
+							$skipped_imgs++;
+							continue;
+						}
+
+						// Get the image ID.
+						$image_id = attachment_url_to_postid( $src );
+
+						// Skip if no image ID.
+						if ( ! $image_id ) {
+							$skipped_imgs++;
+							continue;
+						}
+
+						// If we found an image, update the post.
+						$found_imgs[] = $image_id;
+
+						// Add the wp-image-{$image_id} class to the image.
+						$tags->add_class( 'wp-image-' . $image_id );
+					}
+
+					// Get the updated HTML.
+					$html = $tags->get_updated_html();
+
+					// Update the post content if we found an image.
+					if ( ! empty( $found_imgs ) ) {
+						if ( ! $dry_run ) {
+							$post_id = wp_update_post( [
+								'ID'           => $post_id,
+								'post_content' => $html,
+							] );
+							$processed_imgs++;
+							WP_CLI::success( sprintf( 'Updated post %d. Found and added %d images. URL: %s', $post_id, $processed_imgs, get_permalink( $post_id ) ) );
+						} else {
+							WP_CLI::log( sprintf( 'Dry run: Would update post %d. Found and added %d images. URL: %s', $post_id, $processed_imgs, get_permalink( $post_id ) ) );
+						}
+
+						$processed_posts++;
+					} else {
+						$skipped_posts++;
+					}
+				endwhile;
+			} else {
+				WP_CLI::success( 'No posts found.' );
+			}
+			wp_reset_postdata();
+
+			WP_CLI::log( '' );
+			WP_CLI::log( '=== Summary ===' );
+			WP_CLI::log( sprintf( 'Processed posts: %d', $processed_posts ) );
+			WP_CLI::log( sprintf( 'Skipped posts: %d', $skipped_posts ) );
+			WP_CLI::log( sprintf( 'Found images: %d', $processed_imgs ) );
+			WP_CLI::log( sprintf( 'Skipped images: %d', $skipped_imgs ) );
+
+		} catch ( Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
 	/**
 	 * Delete attachments that don't have associated files.
 	 *
