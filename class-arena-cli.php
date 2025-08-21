@@ -84,11 +84,11 @@ class WPArena_CLI_Command {
 						$class = (string) $tags->get_attribute( 'class' );
 						$src   = (string) $tags->get_attribute( 'src' );
 
-						// Skip if the image is already a WP image.
-						if ( str_contains( $class, 'wp-image-' ) ) {
-							$skipped_imgs++;
-							continue;
-						}
+						// // Skip if the image is already a WP image.
+						// if ( str_contains( $class, 'wp-image-' ) ) {
+						// 	$skipped_imgs++;
+						// 	continue;
+						// }
 
 						// Skip if no src.
 						if ( empty( $src ) ) {
@@ -110,6 +110,16 @@ class WPArena_CLI_Command {
 
 						// Add the wp-image-{$image_id} class to the image.
 						$tags->add_class( 'wp-image-' . $image_id );
+
+						// Update src so it's not the full size.
+						$new_src = wp_get_attachment_image_url( $image_id, '2048x2048' );
+						$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, '1536x1536' );
+						$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, 'large' );
+
+						// If new src.
+						if ( $new_src ) {
+							$tags->set_attribute( 'src', $new_src );
+						}
 					}
 
 					// Get the updated HTML.
