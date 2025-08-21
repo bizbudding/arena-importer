@@ -4,7 +4,7 @@
  * Plugin Name:     Arena Importer
  * Plugin URI:      https://bizbudding.com/
  * Description:     Import posts via WP All Import Pro and recipes to WP Recipe Maker from Arena's export files.
- * Version:         0.10.0
+ * Version:         0.11.0
  *
  * Author:          BizBudding
  * Author URI:      https://bizbudding.com

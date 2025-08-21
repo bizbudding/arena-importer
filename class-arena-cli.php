@@ -120,6 +120,13 @@ class WPArena_CLI_Command {
 						if ( $new_src ) {
 							$tags->set_attribute( 'src', $new_src );
 						}
+
+						// Some alt tags had weirdness, so this cleans it up.
+						$alt     = $tags->get_attribute( 'alt' );
+						$alt_esc = esc_attr( $alt );
+						if ( $alt !== $alt_esc ) {
+							$tags->set_attribute( 'alt', $alt_esc );
+						}
 					}
 
 					// Get the updated HTML.
@@ -133,9 +140,9 @@ class WPArena_CLI_Command {
 								'post_content' => $html,
 							] );
 							$processed_imgs++;
-							WP_CLI::success( sprintf( 'Updated post %d. Found and added %d images. URL: %s', $post_id, $processed_imgs, get_permalink( $post_id ) ) );
+							WP_CLI::success( sprintf( 'Updated post %d. Found and added %d images. URL: %s', $post_id, $found_imgs, get_permalink( $post_id ) ) );
 						} else {
-							WP_CLI::log( sprintf( 'Dry run: Would update post %d. Found and added %d images. URL: %s', $post_id, $processed_imgs, get_permalink( $post_id ) ) );
+							WP_CLI::log( sprintf( 'Dry run: Would update post %d. Found and added %d images. URL: %s', $post_id, $found_imgs, get_permalink( $post_id ) ) );
 						}
 
 						$processed_posts++;
