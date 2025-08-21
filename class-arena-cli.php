@@ -123,6 +123,9 @@ class WPArena_CLI_Command {
 	 * [--post_type=<post_type>]
 	 * : The post type to process. Default: 'post'.
 	 *
+	 * [--post_in=<post_id>]
+	 * : The post ID to process.
+	 *
 	 * [--offset=<number>]
 	 * : Start from this offset (default: 0).
 	 *
@@ -153,19 +156,26 @@ class WPArena_CLI_Command {
 		$post_type = isset( $assoc_args['post_type'] ) ? $assoc_args['post_type'] : 'post';
 		$offset    = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
 		$per_page  = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
+		$post_in   = isset( $assoc_args['post_in'] ) ? explode( ',', $assoc_args['post_in'] ) : [];
 		$dry_run   = isset( $assoc_args['dry-run'] );
 
 		WP_CLI::log( "Loading posts..." );
 
 		try {
-			$query = new WP_Query([
+			$query_args = [
 				'post_type'              => $post_type,
 				'posts_per_page'         => $per_page,
 				'offset'                 => $offset,
 				'no_found_rows'          => true,
 				'update_post_meta_cache' => false,
 				'update_post_term_cache' => false,
-			]);
+			];
+
+			if ( ! empty( $post_in ) ) {
+				$query_args['post__in'] = $post_in;
+			}
+
+			$query = new WP_Query( $query_args );
 
 			$processed_posts = 0;
 			$processed_imgs  = 0;
@@ -177,6 +187,7 @@ class WPArena_CLI_Command {
 
 				while ( $query->have_posts() ) : $query->the_post();
 					$found_imgs = [];
+					$processed_blocks = false;
 					$post_id    = get_the_ID();
 					$html       = get_post_field( 'post_content', $post_id );
 
@@ -196,22 +207,125 @@ class WPArena_CLI_Command {
 						//   "className" => "wp-image-857"
 						// ]
 
-						$new_html = '';
+						$new_blocks = [];
+						$blocks     = parse_blocks( $html );
 
-						$blocks = parse_blocks( $html );
 						foreach ( $blocks as $block ) {
 							// Skip if not an image block.
 							if ( 'core/image' !== $block['blockName'] ) {
-								$new_html .= render_block( $block );
+								$new_blocks[] = $block;
 								continue;
 							}
 
-							$id   = $block['attrs']['id'] ?? null;
-							$slug = $block['attrs']['sizeSlug'] ?? null;
+							// Get block attributes.
+							$id    = $block['attrs']['id'] ?? null;
+							$size  = $block['attrs']['sizeSlug'] ?? 'large';
+							$link  = $block['attrs']['linkDestination'] ?? 'none';
+							$align = $block['attrs']['align'] ?? 'none';
+							$class = (string) ($block['attrs']['className'] ?? '');
 
-							if ( ! $id ) {
+							// Skip if we already have an image ID.
+							if ( $id ) {
+								$new_blocks[] = $block;
+								continue;
 							}
+
+							// Get inner content.
+							$inner_content = $block['innerContent'][0] ?? '';
+							$inner_content = $inner_content ? $inner_content : $block['innerHTML'] ?? '';
+
+							// Skip if no inner content.
+							if ( ! $inner_content ) {
+								$new_blocks[] = $block;
+								continue;
+							}
+
+							// Set up tag processor.
+							$tags = new WP_HTML_Tag_Processor( $inner_content );
+
+							// Loop through img tags.
+							while ( $tags->next_tag( [ 'tag_name' => 'figure' ] ) ) {
+								$tags->add_class( 'size-' . $size );
+							}
+
+							// Get the updated HTML.
+							$inner_content = $tags->get_updated_html();
+
+							// Set up tag processor.
+							$tags = new WP_HTML_Tag_Processor( $inner_content );
+
+							// Flag to track if we processed an image
+							$processed_image = false;
+
+							// Loop through img tags.
+							while ( $tags->next_tag( [ 'tag_name' => 'img' ] ) ) {
+								$src = (string) $tags->get_attribute( 'src' );
+
+								// Skip if no src.
+								if ( empty( $src ) ) {
+									continue;
+								}
+
+								// Get the image ID.
+								$image_id = attachment_url_to_postid( $src );
+
+								// Skip if no image ID.
+								if ( ! $image_id ) {
+									continue;
+								}
+
+								// Update src so it's not the full size.
+								$new_src = wp_get_attachment_image_url( $image_id, $size );
+
+								// If url, set the src attribute and update the srcset attribute.
+								if ( $new_src ) {
+									$tags->set_attribute( 'src', $new_src );
+								}
+
+								// Some alt tags had weirdness, so this cleans it up.
+								$alt     = $tags->get_attribute( 'alt' );
+								$alt_esc = esc_attr( sanitize_text_field( $alt ) );
+								if ( $alt !== $alt_esc ) {
+									$tags->set_attribute( 'alt', $alt_esc );
+								}
+
+								// Get the title attribute.
+								$title = $tags->get_attribute( 'title' );
+								$title_esc = esc_attr( sanitize_text_field( $title ) );
+								if ( $title !== $title_esc ) {
+									$tags->set_attribute( 'title', $title_esc );
+								}
+
+								// Set image classes.
+								$tags->add_class( 'wp-image-' . $image_id );
+
+								// Set block attributes.
+								$class          .= ' wp-image-' . $image_id . ' align' . $align;
+								$block['attrs']  = [
+									'id'              => $image_id,
+									'sizeSlug'        => $size,
+									'linkDestination' => $link,
+									'align'           => $align,
+									'className'       => trim( $class ),
+								];
+
+								// Mark that we processed an image and break out of the while loop
+								$processed_image  = true;
+								$processed_blocks = true;
+								break;
+							}
+
+							// Update the block's inner content if we processed an image
+							if ( $processed_image ) {
+								$new_html              = $tags->get_updated_html();
+								$block['innerContent'] = [ $new_html ];
+								$block['innerHTML']    = $new_html;
+							}
+
+							$new_blocks[] = $block;
 						}
+
+						$html = serialize_blocks( $new_blocks );
 					} else {
 						// Set up tag processor.
 						$tags = new WP_HTML_Tag_Processor( $html );
@@ -220,12 +334,6 @@ class WPArena_CLI_Command {
 						while ( $tags->next_tag( [ 'tag_name' => 'img' ] ) ) {
 							// $class = (string) $tags->get_attribute( 'class' );
 							$src = (string) $tags->get_attribute( 'src' );
-
-							// // Skip if the image is already a WP image.
-							// if ( str_contains( $class, 'wp-image-' ) ) {
-							// 	$skipped_imgs++;
-							// 	continue;
-							// }
 
 							// Skip if no src.
 							if ( empty( $src ) ) {
@@ -260,9 +368,16 @@ class WPArena_CLI_Command {
 
 							// Some alt tags had weirdness, so this cleans it up.
 							$alt     = $tags->get_attribute( 'alt' );
-							$alt_esc = esc_attr( $alt );
+							$alt_esc = esc_attr( sanitize_text_field( $alt ) );
 							if ( $alt !== $alt_esc ) {
 								$tags->set_attribute( 'alt', $alt_esc );
+							}
+
+							// Get the title attribute.
+							$title = $tags->get_attribute( 'title' );
+							$title_esc = esc_attr( sanitize_text_field( $title ) );
+							if ( $title !== $title_esc ) {
+								$tags->set_attribute( 'title', $title_esc );
 							}
 						}
 
@@ -270,8 +385,8 @@ class WPArena_CLI_Command {
 						$html = $tags->get_updated_html();
 					}
 
-					// Update the post content if we found an image.
-					if ( ! empty( $found_imgs ) ) {
+					// Update the post content if we found an image or processed blocks.
+					if ( ! empty( $found_imgs ) || $processed_blocks ) {
 						if ( ! $dry_run ) {
 							$post_id = wp_update_post( [
 								'ID'           => $post_id,
