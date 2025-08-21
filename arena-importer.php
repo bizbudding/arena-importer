@@ -14,7 +14,7 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 // Autoload vendor.
-require_once( __DIR__ . '/vendor/autoload.php' );
+// require_once( __DIR__ . '/vendor/autoload.php' );
 
 // Load the CLI class.
 require_once( __DIR__ . '/class-arena-cli.php' );
