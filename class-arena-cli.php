@@ -140,9 +140,9 @@ class WPArena_CLI_Command {
 								'post_content' => $html,
 							] );
 							$processed_imgs++;
-							WP_CLI::success( sprintf( 'Updated post %d. Found and added %d images. URL: %s', $post_id, $found_imgs, get_permalink( $post_id ) ) );
+							WP_CLI::success( sprintf( 'Updated post %d. Found and fixed %d images: %s', $post_id, count( $found_imgs ), get_permalink( $post_id ) ) );
 						} else {
-							WP_CLI::log( sprintf( 'Dry run: Would update post %d. Found and added %d images. URL: %s', $post_id, $found_imgs, get_permalink( $post_id ) ) );
+							WP_CLI::log( sprintf( 'Dry run: Would update post %d. Found and fixed %d images: %s', $post_id, count( $found_imgs ), get_permalink( $post_id ) ) );
 						}
 
 						$processed_posts++;
