@@ -63,13 +63,13 @@ class WPArena_CLI_Command {
 				'update_post_term_cache' => false,
 			]);
 
+			$processed_posts = 0;
+			$processed_imgs  = 0;
+			$skipped_imgs    = 0;
+			$skipped_posts   = 0;
+
 			if ( $query->have_posts() ) {
 				WP_CLI::log( sprintf( "Found %d posts starting from offset %d. Processing...", $query->post_count, $offset ) );
-
-				$processed_posts = 0;
-				$processed_imgs  = 0;
-				$skipped_imgs    = 0;
-				$skipped_posts   = 0;
 
 				while ( $query->have_posts() ) : $query->the_post();
 					$found_imgs = [];
