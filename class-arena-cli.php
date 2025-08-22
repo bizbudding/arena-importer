@@ -87,6 +87,7 @@ class WPArena_CLI_Command {
 					$attachment_id = $attachments[0] ?? false;
 
 					if ( ! $attachment_id ) {
+						WP_CLI::warning( sprintf( 'No attachment found for post %d', $post->ID ) );
 						$skipped_imgs++;
 						continue;
 					}
