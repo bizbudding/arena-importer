@@ -379,7 +379,6 @@ class WPArena_CLI_Command {
 
 							// Add the size-large class to the image.
 							$tags->add_class( 'size-large' );
-							ray( 'this one: ', get_permalink( $post_id ) );
 
 							// Update src so it's not the full size.
 							$new_src = wp_get_attachment_image_url( $image_id, 'large' );
