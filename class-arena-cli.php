@@ -84,7 +84,7 @@ class WPArena_CLI_Command {
 						'fields'         => 'ids',
 					]);
 
-					$attachment_id = $attachments[0] ?? false;
+					$attachment_id = $attachments[0] ?? 0;
 
 					if ( ! $attachment_id ) {
 						WP_CLI::warning( sprintf( 'No attachment found for post %d', $post->ID ) );

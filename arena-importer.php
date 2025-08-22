@@ -149,6 +149,41 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 } );
 
 /**
+ * Set attachment credit from imported post meta.
+ *
+ * @param int $post_id       The post ID.
+ * @param int $attachment_id The attachment ID.
+ *
+ * @return void
+ */
+add_action( 'pmxi_gallery_image', function( $post_id, $attachment_id ) {
+	// Bail if not a post.
+	if ( ! get_post( $post_id ) ) {
+		return;
+	}
+
+	// Get the post credit.
+	$credit = get_post_meta( $post_id, '_media_credit', true );
+
+	// Bail if no credit is found.
+	if ( ! $credit ) {
+		return;
+	}
+
+	// Get the attachment credit.
+	$attachment_credit = get_post_meta( $attachment_id, '_media_credit', true );
+
+	// Bail if we already have a credit.
+	if ( $attachment_credit && $credit === $attachment_credit ) {
+		return;
+	}
+
+	// Update the attachment credit.
+	update_post_meta( $attachment_id, '_media_credit', $credit );
+
+}, 10, 2 );
+
+/**
  * Set user avatar.
  *
  * @param int $user_id The post ID.
@@ -248,7 +283,7 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
  * @return array
  */
 add_filter( 'wp_all_import_images_uploads_dir', function( $uploads, $articleData, $current_xml_node, $import_id ) {
-	if ( ! empty($articleData['post_date'])) {
+	if ( isset( $articleData['post_date'] ) && ! empty( $articleData['post_date'] ) ) {
 		$uploads['path'] = $uploads['basedir'] . '/' . date( 'Y/m', strtotime( $articleData['post_date'] ) );
 		$uploads['url']  = $uploads['baseurl'] . '/' . date( 'Y/m', strtotime( $articleData['post_date'] ) );
 
@@ -258,72 +293,6 @@ add_filter( 'wp_all_import_images_uploads_dir', function( $uploads, $articleData
 	}
 	return $uploads;
 }, 10, 4 );
-
-/**
- * Filter image URLs before WP All Import Pro checks for existing images.
- *
- * This filter modifies the URL right before it's used in the findExistingImage method.
- *
- * @param int $attachment_id The attachment ID.
- *
- * @return int The attachment ID.
- */
-add_filter( 'wp_all_import_get_existing_image', function( $attachment_id ) {
-	// Bail if no attachment ID is found.
-	if ( ! $attachment_id) {
-		return $attachment_id;
-	}
-
-	// Get the original URL from the image record.
-	if ( $image_record && isset( $image_record->image_url ) ) {
-		$original_url = $image_record->image_url;
-
-		// Remove c_fit,h_600,w_600/ from URLs.
-		$modified_url = str_replace( 'c_fit,h_600,w_600/', '', $original_url );
-
-		// If the URL was modified, search again.
-		if ( $modified_url !== $original_url ) {
-			global $wpdb;
-			$table_name = $wpdb->prefix . 'pmxi_images';
-
-			$existing_image = $wpdb->get_row($wpdb->prepare(
-				"SELECT * FROM {$table_name} WHERE image_url = %s",
-				$modified_url
-			));
-
-			// If the image exists.
-			if ( $existing_image ) {
-				// Get the attachment.
-				$attachment = get_post( $existing_image->attachment_id );
-
-				// If we have an attachment, return the attachment ID.
-				if ( $attachment && 'attachment' === $attachment->post_type ) {
-					return $existing_image->attachment_id;
-				}
-			}
-		}
-	}
-
-	return $attachment_id;
-
-}, 10, 2);
-
-/**
- * Modify image URL for search purposes
- *
- * Customize this function to remove specific parts of URLs
- * that you want to ignore when matching existing images
- *
- * @param string $url The original image URL
- * @return string The modified URL for searching
- */
-function modify_image_url_for_search($url) {
-
-	// Remove c_fit,h_600,w_600/ from URLs
-	$url = str_replace('c_fit,h_600,w_600/', '', $url);
-
-	return $url;
-}
 
 /**
  * Function handles downloading a remote file and inserting it into the WP Media Library.
