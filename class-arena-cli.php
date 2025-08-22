@@ -211,6 +211,24 @@ class WPArena_CLI_Command {
 						$blocks     = parse_blocks( $html );
 
 						foreach ( $blocks as $block ) {
+							// If html block.
+							if ( 'core/html' === $block['blockName'] ) {
+								$inner_html    = $block['innerHTML'] ?? '';
+								$inner_content = $block['innerContent'] ?? [];
+
+								// Skip if the html block contains an empty figure tag.
+								// This is leftover from converting to blocks prior to this image fix command being run.
+								if ( str_contains( $inner_html, '<figure></figure>' )
+									&& 1 === count( $inner_content )
+									&& str_contains( $inner_content[0], '<figure></figure>' )
+								) {
+									continue;
+								}
+
+								$new_blocks[] = $block;
+								continue;
+							}
+
 							// Skip if not an image block.
 							if ( 'core/image' !== $block['blockName'] ) {
 								$new_blocks[] = $block;
@@ -327,6 +345,9 @@ class WPArena_CLI_Command {
 
 						$html = serialize_blocks( $new_blocks );
 					} else {
+						// Remove caption tags.
+						$html = str_replace( ['[caption]', '[/caption]'], '', $html );
+
 						// Set up tag processor.
 						$tags = new WP_HTML_Tag_Processor( $html );
 
@@ -356,10 +377,12 @@ class WPArena_CLI_Command {
 							// Add the wp-image-{$image_id} class to the image.
 							$tags->add_class( 'wp-image-' . $image_id );
 
+							// Add the size-large class to the image.
+							$tags->add_class( 'size-large' );
+							ray( 'this one: ', get_permalink( $post_id ) );
+
 							// Update src so it's not the full size.
-							$new_src = wp_get_attachment_image_url( $image_id, '2048x2048' );
-							$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, '1536x1536' );
-							$new_src = $new_src ? $new_src : wp_get_attachment_image_url( $image_id, 'large' );
+							$new_src = wp_get_attachment_image_url( $image_id, 'large' );
 
 							// If new src.
 							if ( $new_src ) {
