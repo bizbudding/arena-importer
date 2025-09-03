@@ -10,9 +10,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 class WPArena_CLI_Command {
 
 	/**
-	 * When importing, the _media_credit post meta was saved to the arena_item post type
-	 * instead of the attachment that was created during import.
-	 * This command migrates the media credits to the correct attachment post type.
+	 * Migrate arena galleries.
 	 *
 	 * ## OPTIONS
 	 *
@@ -25,80 +23,109 @@ class WPArena_CLI_Command {
 	 * [--per_page=<number>]
 	 * : Number of posts to process per batch (default: 100).
 	 *
+	 * [--post_in=<post_id>]
+	 * : The post ID to process.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     # Preview posts that would be updated without making changes.
-	 *     wp arena migrate-media-credits --per_page=1 --dry-run
+	 *     wp arena migrate-galleries --per_page=1 --dry-run
 	 *
 	 *     # Actually update posts.
-	 *     wp arena migrate-media-credits --per_page=10
+	 *     wp arena migrate-galleries --per_page=10
 	 *
 	 *     # Process in batches with offset.
-	 *     wp arena migrate-media-credits --per_page=50 --offset=1000
+	 *     wp arena migrate-galleries --per_page=50 --offset=1000
 	 *
-	 * @subcommand migrate-media-credits
+	 *     # Process specific posts.
+	 *     wp arena migrate-galleries --post_in=146725,123,456
+	 *
+	 * @subcommand migrate-galleries
 	 * @param array $args
 	 * @param array $assoc_args
 	 *
 	 * @return void
 	 */
-	public function migrate_media_credits( $args, $assoc_args ) {
+	public function migrate_galleries( $args, $assoc_args ) {
 		$dry_run  = isset( $assoc_args['dry-run'] );
 		$offset   = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
 		$per_page = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
+		$post_in  = isset( $assoc_args['post_in'] ) ? explode( ',', $assoc_args['post_in'] ) : [];
 
 		WP_CLI::log( "Loading posts..." );
 
-		try {
-			$query = new WP_Query([
-				'post_type'              => 'arena_item',
-				'post_status'            => 'any',
-				'posts_per_page'         => $per_page,
-				'offset'                 => $offset,
-				'no_found_rows'          => true,
-				'update_post_meta_cache' => false,
-				'update_post_term_cache' => false,
-			]);
+		$query_args = [
+			'post_type'              => 'post',
+			'post_status'            => 'any',
+			'no_found_rows'          => true,
+			'update_post_meta_cache' => false,
+			'update_post_term_cache' => false,
+		];
 
-			$processed_imgs = 0;
-			$skipped_imgs   = 0;
+		if ( ! empty( $post_in ) ) {
+			$query_args['post__in']       = array_map( 'intval', $post_in );
+			$query_args['posts_per_page'] = count( $post_in );
+		} else {
+			$query_args['posts_per_page'] = $per_page;
+			$query_args['offset']         = $offset;
+		}
+
+		try {
+			$query     = new WP_Query( $query_args );
+			$processed = 0;
+			$skipped   = 0;
 
 			if ( $query->have_posts() ) {
 				WP_CLI::log( sprintf( "Found %d posts starting from offset %d. Processing...", $query->post_count, $offset ) );
 
 				while ( $query->have_posts() ) : $query->the_post();
-					global $post;
+					$post_id = get_the_ID();
+					$content = get_post_field( 'post_content', $post_id );
 
-					$media_credit = get_post_meta( $post->ID, '_media_credit', true );
-
-					if ( ! $media_credit ) {
-						$skipped_imgs++;
+					// Skip if the post doesn't have a gallery shortcode.
+					if ( ! has_shortcode( $content, 'gallery' ) ) {
+						$skipped++;
 						continue;
 					}
 
-					// Get post by parent id.
-					$attachments = get_posts([
-						'post_type'      => 'attachment',
-						'post_parent'    => $post->ID,
-						'posts_per_page' => 1,
-						'fields'         => 'ids',
-					]);
+					// Get the shortcode regex.
+					$pattern = get_shortcode_regex();
 
-					$attachment_id = $attachments[0] ?? 0;
-
-					if ( ! $attachment_id ) {
-						WP_CLI::warning( sprintf( 'No attachment found for post %d', $post->ID ) );
-						$skipped_imgs++;
+					// Skip if the post doesn't have a gallery shortcode.
+					if ( ! ( preg_match_all( '/' . $pattern . '/s', $content, $matches )
+						&& isset( $matches[2] )
+						&& in_array( 'gallery', (array) $matches[2] ) ) ) {
+						$skipped++;
 						continue;
 					}
 
-					if ( ! $dry_run ) {
-						update_post_meta( $attachment_id, '_media_credit', $media_credit );
-						WP_CLI::log( sprintf( 'Updated attachment %d with media credit: %s %s', $attachment_id, $media_credit, get_permalink( $attachment_id ) ) );
-					} else {
-						WP_CLI::log( sprintf( 'Dry run: Would update attachment %d with media credit: %s %s', $attachment_id, $media_credit, get_permalink( $attachment_id ) ) );
+					// Get the shortcode count.
+					$shortcode_count  = count( $matches[2] );
+					$shortcodes_array = $matches[2] ?? [];
+					$atts_array       = $matches[3] ?? [];
+
+					// Loop through the shortcodes.
+					for ( $i = 0; $i < $shortcode_count; $i++ ) {
+						$shortcode = $shortcodes_array[ $i ];
+						$atts      = shortcode_parse_atts( $atts_array[ $i ] );
+
+						// Skip if the shortcode is not a gallery.
+						if ( 'gallery' !== $shortcode ) {
+							continue;
+						}
+
+						// Get the full gallery shortcode.
+						$search = $matches[ $i ][ $i ] ?? '';
 					}
-					$processed_imgs++;
+
+					// if ( $dry_run ) {
+					// 	WP_CLI::log( sprintf( 'Would update attachment %d for post %d with source id %s', $attachment_id, $post_id, $source_id ) );
+					// } else {
+					// 	update_post_meta( $attachment_id, 'arena_source_id', $source_id );
+					// 	WP_CLI::log( sprintf( 'Updated attachment %d for post %d with source id %s', $attachment_id, $post_id, $source_id ) );
+					// }
+
+					$processed++;
 				endwhile;
 			} else {
 				WP_CLI::success( 'No posts found.' );
@@ -107,12 +134,234 @@ class WPArena_CLI_Command {
 
 			WP_CLI::log( '' );
 			WP_CLI::log( '=== Summary ===' );
-			WP_CLI::log( sprintf( 'Processed images: %d', $processed_imgs ) );
-			WP_CLI::log( sprintf( 'Skipped images: %d', $skipped_imgs ) );
+			WP_CLI::log( sprintf( 'Processed: %d', $processed ) );
+			WP_CLI::log( sprintf( 'Skipped: %d', $skipped ) );
 		} catch ( Exception $e ) {
 			WP_CLI::error( $e->getMessage() );
 		}
 	}
+
+	/**
+	 * Update attachment source url.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--dry-run]
+	 * : Only list posts that would be updated. No changes will be made.
+	 *
+	 * [--offset=<number>]
+	 * : Start from this offset (default: 0).
+	 *
+	 * [--per_page=<number>]
+	 * : Number of posts to process per batch (default: 100).
+	 *
+	 * [--post_in=<post_id>]
+	 * : The post ID to process.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Preview posts that would be updated without making changes.
+	 *     wp arena update-attachment-source-url --per_page=1 --dry-run
+	 *
+	 *     # Actually update posts.
+	 *     wp arena update-attachment-source-url --per_page=10
+	 *
+	 *     # Process in batches with offset.
+	 *     wp arena update-attachment-source-url --per_page=50 --offset=1000
+	 *
+	 *     # Process specific posts.
+	 *     wp arena update-attachment-source-url --post_in=164003,123,456
+	 *
+	 * @subcommand update-attachment-source-url
+	 * @param array $args
+	 * @param array $assoc_args
+	 *
+	 * @return void
+	 */
+	public function update_attachment_source_url( $args, $assoc_args ) {
+		$dry_run  = isset( $assoc_args['dry-run'] );
+		$offset   = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
+		$per_page = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
+		$post_in  = isset( $assoc_args['post_in'] ) ? explode( ',', $assoc_args['post_in'] ) : [];
+
+		WP_CLI::log( "Loading posts..." );
+
+		$query_args = [
+			'post_type'              => 'arena_item',
+			'post_status'            => 'any',
+			'no_found_rows'          => true,
+			'update_post_meta_cache' => false,
+			'update_post_term_cache' => false,
+		];
+
+		if ( ! empty( $post_in ) ) {
+			$query_args['post__in']       = array_map( 'intval', $post_in );
+			$query_args['posts_per_page'] = count( $post_in );
+		} else {
+			$query_args['posts_per_page'] = $per_page;
+			$query_args['offset']         = $offset;
+		}
+
+		try {
+			$query     = new WP_Query( $query_args );
+			$processed = 0;
+			$skipped   = 0;
+
+			if ( $query->have_posts() ) {
+				WP_CLI::log( sprintf( "Found %d posts starting from offset %d. Processing...", $query->post_count, $offset ) );
+
+				while ( $query->have_posts() ) : $query->the_post();
+					$post_id       = get_the_ID();
+					$attachment_id = get_post_thumbnail_id( $post_id );
+
+					if ( ! $attachment_id ) {
+						$skipped++;
+						continue;
+					}
+
+					$source_url = get_post_meta( $post_id, 'arena_source_url', true );
+
+					if ( ! $source_url ) {
+						$skipped++;
+						continue;
+					}
+
+					$attachment_source_url = get_post_meta( $attachment_id, 'arena_source_url', true );
+
+					if ( $source_url && $source_url === $attachment_source_url ) {
+						$skipped++;
+						continue;
+					}
+
+					if ( $dry_run ) {
+						WP_CLI::log( sprintf( 'Would update attachment %d for post %d with source url %s', $attachment_id, $post_id, $source_url ) );
+					} else {
+						update_post_meta( $attachment_id, 'arena_source_url', $source_url );
+						WP_CLI::log( sprintf( 'Updated attachment %d for post %d with source url %s', $attachment_id, $post_id, $source_url ) );
+					}
+
+					$processed++;
+				endwhile;
+			} else {
+				WP_CLI::success( 'No posts found.' );
+			}
+			wp_reset_postdata();
+
+			WP_CLI::log( '' );
+			WP_CLI::log( '=== Summary ===' );
+			WP_CLI::log( sprintf( 'Processed: %d', $processed ) );
+			WP_CLI::log( sprintf( 'Skipped: %d', $skipped ) );
+		} catch ( Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	// /**
+	//  * Parse the instructions.
+	//  *
+	//  * @since 0.1.0
+	//  *
+	//  * @param string $html The HTML to parse.
+	//  * @param int    $id   The ID of the recipe.
+	//  *
+	//  * @return array
+	//  */
+	// private function parse_instructions( $html, $id ) {
+	// 	$groups         = [];
+	// 	$current_group  = [
+	// 		'name'         => '',
+	// 		'instructions' => [],
+	// 	];
+
+	// 	// Match headings, list items, paragraphs, and figures (including nested <img> tags).
+	// 	preg_match_all( '#<(h[1-6]|p|li|figure)([^>]*)>(.*?)</\1>|<img\s+([^>]+)>#is', $html, $matches, PREG_SET_ORDER );
+
+	// 	// Loop through matches.
+	// 	foreach ( $matches as $match ) {
+	// 		// Get the tag.
+	// 		$tag = strtolower( $match[1] ?? 'img' );
+
+	// 		// Handle headings.
+	// 		if ( preg_match( '#^h[1-6]$#', $tag ) ) {
+	// 			$body = trim( html_entity_decode( $match[3] ?? '' ) );
+	// 			$body = strip_tags( $body );
+	// 			$body = trim( $body );
+
+	// 			// Maybe add the current group to the groups array.
+	// 			if ( ! empty( $current_group['instructions'] ) || '' !== $current_group['name'] ) {
+	// 				$groups[] = $current_group;
+	// 			}
+
+	// 			// Start a new group.
+	// 			$current_group = [
+	// 				'name'         => $body,
+	// 				'instructions' => [],
+	// 			];
+
+	// 		}
+	// 		// Handle paragraphs, list items, and figures.
+	// 		elseif ( in_array( $tag, [ 'p', 'li', 'figure' ], true ) ) {
+	// 			$image_id = 0;
+	// 			$body     = trim( html_entity_decode( $match[3] ?? '' ) );
+
+	// 			// Match any <img> tags inside the block.
+	// 			preg_match_all( '/<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>/i', $body, $img_matches );
+
+	// 			// Handle any image matches.
+	// 			if ( ! empty( $img_matches[1] ) ) {
+	// 				foreach ( $img_matches[1] as $image_url ) {
+	// 					// Upload image and get ID.
+	// 					$image_id = arena_upload_to_media_library( $image_url, $id );
+	// 					break;
+	// 				}
+
+	// 				// Remove image tags from the text body.
+	// 				$body = preg_replace( '/<img\s+[^>]*>/i', '', $body );
+	// 			}
+
+	// 			// Some instructions have the numbers in the text like "1. Preheat oven to 400°."
+	// 			// We need to remove the numbers.
+	// 			$body = preg_replace( '/^\d+\.\s*/', '', $body );
+	// 			$body = strip_tags( $body );
+	// 			$body = trim( $body );
+
+	// 			// Add remaining text if any.
+	// 			if ( $body || $image_id ) {
+	// 				$current_group['instructions'][] = [
+	// 					'image' => $image_id,
+	// 					'text'  => $body,
+	// 				];
+	// 			}
+	// 		}
+	// 		// Handle standalone images.
+	// 		elseif ( 'img' === $tag ) {
+	// 			$attr = $match[4] ?? '';
+
+	// 			// Get the image URL.
+	// 			if ( preg_match( '/src=["\']([^"\']+)["\']/', $attr, $src_match ) ) {
+	// 				$image_url = $src_match[1];
+
+	// 				// Upload image and get ID.
+	// 				$image_id = arena_upload_to_media_library( $image_url, $id );
+
+	// 				// Add the image to the current group.
+	// 				if ( $image_id ) {
+	// 					$current_group['instructions'][] = [
+	// 						'image' => $image_id,
+	// 						'text'  => '',
+	// 					];
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+
+	// 	// Append the final group.
+	// 	if ( ! empty( $current_group['instructions'] ) || '' !== $current_group['name'] ) {
+	// 		$groups[] = $current_group;
+	// 	}
+
+	// 	return $groups;
+	// }
 
 	/**
 	 * Update content images.
@@ -444,6 +693,111 @@ class WPArena_CLI_Command {
 	}
 
 	/**
+	 * When importing, the _media_credit post meta was saved to the arena_item post type
+	 * instead of the attachment that was created during import.
+	 * This command migrates the media credits to the correct attachment post type.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--dry-run]
+	 * : Only list posts that would be updated. No changes will be made.
+	 *
+	 * [--offset=<number>]
+	 * : Start from this offset (default: 0).
+	 *
+	 * [--per_page=<number>]
+	 * : Number of posts to process per batch (default: 100).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Preview posts that would be updated without making changes.
+	 *     wp arena migrate-media-credits --per_page=1 --dry-run
+	 *
+	 *     # Actually update posts.
+	 *     wp arena migrate-media-credits --per_page=10
+	 *
+	 *     # Process in batches with offset.
+	 *     wp arena migrate-media-credits --per_page=50 --offset=1000
+	 *
+	 * @subcommand migrate-media-credits
+	 * @param array $args
+	 * @param array $assoc_args
+	 *
+	 * @return void
+	 */
+	public function migrate_media_credits( $args, $assoc_args ) {
+		$dry_run  = isset( $assoc_args['dry-run'] );
+		$offset   = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
+		$per_page = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 100;
+
+		WP_CLI::log( "Loading posts..." );
+
+		try {
+			$query = new WP_Query([
+				'post_type'              => 'arena_item',
+				'post_status'            => 'any',
+				'posts_per_page'         => $per_page,
+				'offset'                 => $offset,
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => false,
+				'update_post_term_cache' => false,
+			]);
+
+			$processed_imgs = 0;
+			$skipped_imgs   = 0;
+
+			if ( $query->have_posts() ) {
+				WP_CLI::log( sprintf( "Found %d posts starting from offset %d. Processing...", $query->post_count, $offset ) );
+
+				while ( $query->have_posts() ) : $query->the_post();
+					global $post;
+
+					$media_credit = get_post_meta( $post->ID, '_media_credit', true );
+
+					if ( ! $media_credit ) {
+						$skipped_imgs++;
+						continue;
+					}
+
+					// Get post by parent id.
+					$attachments = get_posts([
+						'post_type'      => 'attachment',
+						'post_parent'    => $post->ID,
+						'posts_per_page' => 1,
+						'fields'         => 'ids',
+					]);
+
+					$attachment_id = $attachments[0] ?? 0;
+
+					if ( ! $attachment_id ) {
+						WP_CLI::warning( sprintf( 'No attachment found for post %d', $post->ID ) );
+						$skipped_imgs++;
+						continue;
+					}
+
+					if ( ! $dry_run ) {
+						update_post_meta( $attachment_id, '_media_credit', $media_credit );
+						WP_CLI::log( sprintf( 'Updated attachment %d with media credit: %s %s', $attachment_id, $media_credit, get_permalink( $attachment_id ) ) );
+					} else {
+						WP_CLI::log( sprintf( 'Dry run: Would update attachment %d with media credit: %s %s', $attachment_id, $media_credit, get_permalink( $attachment_id ) ) );
+					}
+					$processed_imgs++;
+				endwhile;
+			} else {
+				WP_CLI::success( 'No posts found.' );
+			}
+			wp_reset_postdata();
+
+			WP_CLI::log( '' );
+			WP_CLI::log( '=== Summary ===' );
+			WP_CLI::log( sprintf( 'Processed images: %d', $processed_imgs ) );
+			WP_CLI::log( sprintf( 'Skipped images: %d', $skipped_imgs ) );
+		} catch ( Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	/**
 	 * Delete attachments that don't have associated files.
 	 *
 	 * This command scans all attachments and checks if their associated files exist on disk.
@@ -693,216 +1047,6 @@ class WPArena_CLI_Command {
 	}
 
 	/**
-	 * Set Arena featured images for posts.
-	 *
-	 * ## OPTIONS
-	 *
-	 * [--dry-run]
-	 * : Show what would be done without making changes.
-	 *
-	 * [--offset=<number>]
-	 * : Start from this offset (default: 0).
-	 *
-	 * [--per_page=<number>]
-	 * : Number of posts to process per batch (default: 50).
-	 *
-	 * [--post_status=<status>]
-	 * : Post status to process (default: any).
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp arena set-arena-featured-image --dry-run
-	 *     wp arena set-arena-featured-image --offset=100 --per_page=25
-	 *     wp arena set-arena-featured-image --post_status=publish
-	 *
-	 * @subcommand set-arena-featured-image
-	 * @param array $args
-	 * @param array $assoc_args
-	 */
-	public function set_arena_featured_image( $args, $assoc_args ) {
-		$dry_run     = isset( $assoc_args['dry-run'] );
-		$offset      = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
-		$per_page    = isset( $assoc_args['per_page'] ) ? (int) $assoc_args['per_page'] : 20;
-		$post_status = isset( $assoc_args['post_status'] ) ? $assoc_args['post_status'] : 'any';
-
-		// Validate post status
-		$valid_statuses = ['any', 'publish', 'draft', 'pending', 'private', 'trash'];
-		if ( ! in_array( $post_status, $valid_statuses ) ) {
-			WP_CLI::error( sprintf( 'Invalid post status: %s. Valid statuses: %s', $post_status, implode( ', ', $valid_statuses ) ) );
-		}
-
-		$query = new WP_Query(
-			[
-				'post_type'              => 'post',
-				'posts_per_page'         => $per_page,
-				'offset'                 => $offset,
-				'post_status'            => $post_status,
-				'no_found_rows'          => true,
-				'update_post_meta_cache' => false,
-				'update_post_term_cache' => false,
-			]
-		);
-
-		// Initialize counters
-		$processed = 0;
-		$updated   = 0;
-		$skipped   = 0;
-		$errors    = 0;
-
-		if ( $query->have_posts() ) {
-			WP_CLI::log( sprintf( 'Processing %d posts starting from offset %d...', $query->post_count, $offset ) );
-
-			while ( $query->have_posts() ) : $query->the_post();
-				$post_id = get_the_ID();
-				$processed++;
-
-				try {
-					$featured_id = get_post_thumbnail_id();
-					$arena_url   = get_post_meta( $post_id, 'arena_featured_image_url', true );
-
-					// Skip if no arena URL
-					if ( ! $arena_url ) {
-						$skipped++;
-						// WP_CLI::log( sprintf( 'Skipped post %d: No arena URL', $post_id ) );
-						continue;
-					}
-
-					WP_CLI::log( sprintf( 'Post %d: Arena URL: %s', $post_id, $arena_url ) );
-
-					// Get image ID from arena URL
-					$image_id = $this->get_image_id_by_url_internal( $arena_url );
-					if ( ! $image_id ) {
-						// Try to import the image
-						WP_CLI::log( sprintf( 'Post %d: No image found for URL %s, attempting to import...', $post_id, $arena_url ) );
-						$image_id = $this->import_image_from_url( $arena_url );
-
-						if ( ! $image_id ) {
-							$skipped++;
-							WP_CLI::log( sprintf( 'Skipped post %d: Failed to import image from URL %s', $post_id, $arena_url ) );
-							continue;
-						} else {
-							WP_CLI::success( sprintf( 'Post %d: Successfully imported image %d from URL', $post_id, $image_id ) );
-						}
-					}
-
-					// Check if already set correctly
-					if ( $featured_id && $image_id === $featured_id ) {
-						$skipped++;
-						// WP_CLI::log( sprintf( 'Skipped post %d: Featured image already set correctly', $post_id ) );
-						continue;
-					}
-
-					// Set the featured image
-					if ( ! $dry_run ) {
-						$result = set_post_thumbnail( $post_id, $image_id );
-						if ( $result ) {
-							$updated++;
-							WP_CLI::success( sprintf( 'Updated post %d: Set featured image %d', $post_id, $image_id ) );
-						} else {
-							$errors++;
-							WP_CLI::warning( sprintf( 'Failed to set featured image %d for post %d', $image_id, $post_id ) );
-						}
-					} else {
-						$updated++;
-						WP_CLI::log( sprintf( 'Would update post %d: Set featured image %d (dry run)', $post_id, $image_id ) );
-					}
-
-				} catch ( Exception $e ) {
-					$errors++;
-					WP_CLI::warning( sprintf( 'Error processing post %d: %s', $post_id, $e->getMessage() ) );
-				}
-			endwhile;
-		} else {
-			WP_CLI::warning( 'No posts found matching the criteria.' );
-		}
-
-		wp_reset_postdata();
-
-		// Show summary
-		WP_CLI::log( '' );
-		WP_CLI::log( '=== Summary ===' );
-		WP_CLI::log( sprintf( 'Processed: %d posts', $processed ) );
-		WP_CLI::log( sprintf( 'Updated: %d posts', $updated ) );
-		WP_CLI::log( sprintf( 'Skipped: %d posts', $skipped ) );
-		WP_CLI::log( sprintf( 'Errors: %d posts', $errors ) );
-
-		if ( $dry_run ) {
-			WP_CLI::success( 'Dry run completed. Use --dry-run=false to make actual changes.' );
-		} else {
-			WP_CLI::success( sprintf( 'Completed! Updated %d posts.', $updated ) );
-		}
-	}
-
-	/**
-	 * Get image ID by Arena URL.
-	 *
-	 * ## OPTIONS
-	 *
-	 * <url>
-	 * : The Arena URL to search for
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp arena get-image-id-by-url "https://edm.com/.image/MjE2NzEzMjY1NjMwMTYwMjM5/image001.jpg"
-	 *
-	 * @subcommand get-image-id-by-url
-	 * @param array $args
-	 * @param array $assoc_args
-	 */
-	public function get_image_id_by_url( $args, $assoc_args ) {
-		$url = $args[0];
-
-		if ( empty( $url ) ) {
-			WP_CLI::error( 'Please provide an Arena URL.' );
-		}
-
-		$image_id = $this->get_image_id_by_url_internal( $url );
-
-		if ( $image_id ) {
-			$attachment = get_post( $image_id );
-			WP_CLI::success( sprintf( 'Found attachment ID: %d', $image_id ) );
-			WP_CLI::log( sprintf( 'Title: %s', $attachment->post_title ) );
-			WP_CLI::log( sprintf( 'File: %s', get_attached_file( $image_id ) ) );
-			WP_CLI::log( sprintf( 'Arena URL: %s', get_post_meta( $image_id, 'arena_attachment_url', true ) ) );
-		} else {
-			WP_CLI::warning( sprintf( 'No attachment found for Arena URL: %s', $url ) );
-		}
-
-		return $image_id;
-	}
-
-	/**
-	 * Get image ID by Arena URL (internal helper method).
-	 *
-	 * @param string $url The Arena URL to search for.
-	 * @return int|false The attachment ID or false if not found.
-	 */
-	private function get_image_id_by_url_internal( $url ) {
-		if ( empty( $url ) ) {
-			return false;
-		}
-
-		// Search for attachment with matching arena_attachment_url meta
-		$query_args = [
-			'post_type'  => 'attachment',
-			'post_status'=> 'inherit',
-			'fields'     => 'ids',
-			'meta_query' => [
-				[
-					'key'     => 'arena_attachment_url',
-					'value'   => $url,
-					'compare' => '=',
-				],
-			],
-			'posts_per_page' => 1,
-		];
-
-		$attachments = get_posts( $query_args );
-
-		return $attachments && isset( $attachments[0] ) ? $attachments[0] : false;
-	}
-
-	/**
 	 * Find posts that contain only an iframe as content.
 	 *
 	 * ## OPTIONS
@@ -1131,57 +1275,5 @@ class WPArena_CLI_Command {
 
 		$attachments = get_posts( $query_args );
 		return $attachments ? $attachments[0]->ID : false;
-	}
-
-	/**
-	 * Import image from URL.
-	 *
-	 * @param string $url The image URL to import.
-	 * @return int|false The attachment ID or false if import failed.
-	 */
-	private function import_image_from_url( $url ) {
-		if ( empty( $url ) ) {
-			return false;
-		}
-
-		// Make sure we have the functions we need.
-		if ( ! function_exists( 'download_url' ) || ! function_exists( 'media_handle_sideload' ) ) {
-			require_once( ABSPATH . 'wp-admin/includes/media.php' );
-			require_once( ABSPATH . 'wp-admin/includes/file.php' );
-			require_once( ABSPATH . 'wp-admin/includes/image.php' );
-		}
-
-		// Build a temp url.
-		$tmp = download_url( $url );
-
-		// Bail if error.
-		if ( is_wp_error( $tmp ) ) {
-			// Remove the original image and return the error.
-			@unlink( $tmp );
-			return $tmp;
-		}
-
-		// Build the file array.
-		$file_array = [
-			'name'     => basename( parse_url( $url, PHP_URL_PATH ) ),
-			'tmp_name' => $tmp,
-		];
-
-		// Add the image to the media library.
-		$id = media_handle_sideload( $file_array, 0 );
-
-		// Bail if error.
-		if ( is_wp_error( $id ) ) {
-			// Remove the original image and return the error.
-			@unlink( $file_array[ 'tmp_name' ] );
-			return $id;
-		}
-
-		// Clean up the temporary file.
-		if ( file_exists( $tmp ) ) {
-			unlink( $tmp );
-		}
-
-		return $id;
 	}
 }

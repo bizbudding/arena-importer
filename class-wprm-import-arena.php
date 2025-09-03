@@ -81,6 +81,11 @@ class WPRM_Import_Arena extends WPRM_Import {
 			// 	'compare' => 'LIKE',
 			// ],
 			[
+				'key'     => 'recipe_instructions_html',
+				'value'   => '',
+				'compare' => '!=',
+			],
+			[
 				'key'     => 'recipe_ingredients',
 				'value'   => '',
 				'compare' => '!=',
@@ -241,10 +246,10 @@ class WPRM_Import_Arena extends WPRM_Import {
 		$nutrition    = get_post_meta( $id, 'recipe_nutrition', true );
 
 		// Parse raw meta.
-		$instructions = strip_tags( $instructions, '<h1><h2><h3><h4><h5><h6><p><li><figure><img>' );
+		$instructions = strip_tags( (string) $instructions, '<h1><h2><h3><h4><h5><h6><p><li><figure><img>' );
 		$instructions = preg_replace( '/^<!\[CDATA\[(.*?)\]\]>$/s', '$1', $instructions );
 		$ingredients  = preg_replace( '/^<!\[CDATA\[(.*?)\]\]>$/s', '$1', $ingredients );
-		$ingredients  = strip_tags( $ingredients );
+		$ingredients  = strip_tags( (string) $ingredients );
 		$ingredients  = json_decode( (string) $ingredients, true );
 		$courses      = json_decode( (string) $courses, true );
 		$cuisines     = json_decode( (string) $cuisines, true );
@@ -274,7 +279,7 @@ class WPRM_Import_Arena extends WPRM_Import {
 		];
 
 		// Instructions.
-		$recipe['instructions'] = $this->parse_instructions( $instructions );
+		$recipe['instructions'] = $this->parse_instructions( $instructions, $id );
 
 		// Nutrition Facts.
 		$recipe['nutrition'] = [
@@ -307,10 +312,11 @@ class WPRM_Import_Arena extends WPRM_Import {
 	 * @since 0.1.0
 	 *
 	 * @param string $html The HTML to parse.
+	 * @param int    $id   The ID of the recipe.
 	 *
 	 * @return array
 	 */
-	public function parse_instructions( $html ) {
+	public function parse_instructions( $html, $id ) {
 		$groups         = [];
 		$current_group  = [
 			'name'         => '',
@@ -328,6 +334,7 @@ class WPRM_Import_Arena extends WPRM_Import {
 			// Handle headings.
 			if ( preg_match( '#^h[1-6]$#', $tag ) ) {
 				$body = trim( html_entity_decode( $match[3] ?? '' ) );
+				$body = (string) $body;
 				$body = strip_tags( $body );
 				$body = trim( $body );
 
@@ -347,6 +354,7 @@ class WPRM_Import_Arena extends WPRM_Import {
 			elseif ( in_array( $tag, [ 'p', 'li', 'figure' ], true ) ) {
 				$image_id = 0;
 				$body     = trim( html_entity_decode( $match[3] ?? '' ) );
+				$body     = (string) $body;
 
 				// Match any <img> tags inside the block.
 				preg_match_all( '/<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>/i', $body, $img_matches );
@@ -355,18 +363,18 @@ class WPRM_Import_Arena extends WPRM_Import {
 				if ( ! empty( $img_matches[1] ) ) {
 					foreach ( $img_matches[1] as $image_url ) {
 						// Upload image and get ID.
-						$image_id = arena_upload_to_media_library( $image_url, 0 );
+						$image_id = arena_upload_to_media_library( $image_url, $id );
 						break;
 					}
 
 					// Remove image tags from the text body.
-					$body = preg_replace( '/<img\s+[^>]*>/i', '', $body );
+					$body = preg_replace( '/<img\s+[^>]*>/i', '', (string) $body );
 				}
 
 				// Some instructions have the numbers in the text like "1. Preheat oven to 400°."
 				// We need to remove the numbers.
-				$body = preg_replace( '/^\d+\.\s*/', '', $body );
-				$body = strip_tags( $body );
+				$body = preg_replace( '/^\d+\.\s*/', '', (string) $body );
+				$body = strip_tags( (string) $body );
 				$body = trim( $body );
 
 				// Add remaining text if any.
@@ -386,7 +394,7 @@ class WPRM_Import_Arena extends WPRM_Import {
 					$image_url = $src_match[1];
 
 					// Upload image and get ID.
-					$image_id = arena_upload_to_media_library( $image_url, 0 );
+					$image_id = arena_upload_to_media_library( $image_url, $id );
 
 					// Add the image to the current group.
 					if ( $image_id ) {
@@ -420,6 +428,18 @@ class WPRM_Import_Arena extends WPRM_Import {
 		$ingredients = [];
 
 		foreach ( $array as $item ) {
+			$item = trim( $item );
+
+			// Skip empty items.
+			if ( empty( $item ) ) {
+				continue;
+			}
+
+			// Skip items that are just numbers.
+			if ( is_numeric( $item ) ) {
+				continue;
+			}
+
 			$ingredients[] = [
 				'raw' => $item,
 			];
@@ -447,12 +467,6 @@ class WPRM_Import_Arena extends WPRM_Import {
 		// The recipe with ID $id has been imported and we now have a WPRM recipe with ID $wprm_id (can be the same ID).
 		// $post_data will contain any input fields set in the "get_settings_html" function.
 		// Use this function to do anything after the import, like replacing shortcodes.
-
-		// Mark as migrated so it isn't re-imported.
-		update_post_meta( $id, '_recipe_imported', 1 );
-
-		// Set parent post that contains recipe.
-		update_post_meta( $wprm_id, 'wprm_parent_post_id', $id );
 
 		// Add the WPRM shortcode.
 		$post = get_post( $id );
@@ -488,6 +502,12 @@ class WPRM_Import_Arena extends WPRM_Import {
 		if ( $diet ) {
 			wp_set_post_tags( $id, $diet, true );
 		}
+
+		// Mark as migrated so it isn't re-imported.
+		update_post_meta( $id, '_recipe_imported', 1 );
+
+		// Set parent post that contains recipe.
+		update_post_meta( $wprm_id, 'wprm_parent_post_id', $id );
 
 		// Mark as checked. This skips manually having to check each recipe.
 		update_post_meta( $wprm_id, 'wprm_import_source', $this->get_uid() . '-checked' );

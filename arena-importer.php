@@ -149,6 +149,47 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 } );
 
 /**
+ * Set modified date.
+ *
+ * @param int $post_id The post ID.
+ *
+ * @return void
+ */
+add_action( 'pmxi_saved_post', function( $post_id ) {
+	// Bail if not a post.
+	if ( ! get_post( $post_id ) ) {
+		return;
+	}
+
+	$modified_date = get_post_meta( $post_id, 'arena_modified_date', true );
+
+	// Bail if no modified date is found.
+	if ( ! $modified_date ) {
+		return;
+	}
+
+	// Get formatted date.
+	$modified_date     = date( 'Y-m-d H:i:s', strtotime( $modified_date ) );
+	$modified_date_gmt = get_gmt_from_date( $modified_date );
+
+	// Update the post modified date directly in the database.
+	global $wpdb;
+	$wpdb->update(
+		$wpdb->posts,
+		[
+			'post_modified'     => $modified_date,
+			'post_modified_gmt' => $modified_date_gmt,
+		],
+		[ 'ID' => $post_id ],
+		[ '%s', '%s' ],
+		[ '%d' ]
+	);
+
+	// Clear the post cache.
+	clean_post_cache( $post_id );
+} );
+
+/**
  * Set attachment credit from imported post meta.
  *
  * @param int $post_id       The post ID.
@@ -182,6 +223,124 @@ add_action( 'pmxi_gallery_image', function( $post_id, $attachment_id ) {
 	update_post_meta( $attachment_id, '_media_credit', $credit );
 
 }, 10, 2 );
+
+/**
+ * Set attachment arena_source_url as post meta.
+ *
+ * @param int $post_id       The post ID.
+ * @param int $attachment_id The attachment ID.
+ *
+ * @return void
+ */
+add_action( 'pmxi_gallery_image', function( $post_id, $attachment_id ) {
+	// Bail if not a post.
+	if ( ! get_post( $post_id ) ) {
+		return;
+	}
+
+	// Get the post source url.
+	$source_url = get_post_meta( $post_id, 'arena_source_url', true );
+
+	// Bail if no source url is found.
+	if ( ! $source_url ) {
+		return;
+	}
+
+	// Get the attachment source url.
+	$attachment_source_url = get_post_meta( $attachment_id, 'arena_source_url', true );
+
+	// Bail if we already have a source url.
+	if ( $attachment_source_url && $source_url === $attachment_source_url ) {
+		return;
+	}
+
+	// Update the attachment source url.
+	update_post_meta( $attachment_id, 'arena_source_url', $source_url );
+
+}, 10, 2 );
+
+/**
+ * Fallback for _media_credit and arena_source_url,
+ * typically when re-running since pmxi_gallery_image doesn't seem to run on existing attachments.
+ *
+ * @param int $post_id The post ID.
+ *
+ * @return void
+ */
+add_action( 'pmxi_saved_post', function( $post_id ) {
+	// Bail if not a post.
+	if ( ! get_post( $post_id ) ) {
+		return;
+	}
+
+	// Bail if not an arena item.
+	if ( 'arena_item' !== get_post_type( $post_id ) ) {
+		return;
+	}
+
+	// Get the data.
+	$credit     = get_post_meta( $post_id, '_media_credit', true );
+	$source_url = get_post_meta( $post_id, 'arena_source_url', true );
+	$source_id  = get_post_meta( $post_id, 'arena_source_id', true );
+	$alt        = get_post_meta( $post_id, 'arena_alt', true );
+	$caption    = get_post_meta( $post_id, 'arena_caption', true );
+
+	// Bail if no credit or source url is found.
+	if ( ! ( $credit || $source_url || $source_id || $caption ) ) {
+		return;
+	}
+
+	// Get the attachment ID.
+	$attachment_id = get_post_thumbnail_id( $post_id );
+
+	// Bail if no attachment ID is found.
+	if ( ! $attachment_id ) {
+		return;
+	}
+
+	// Get the attachment.
+	$attachment = get_post( $attachment_id );
+
+	// Bail if no attachment is found.
+	if ( ! $attachment ) {
+		return;
+	}
+
+	// Get the attachment data.
+	$attachment_credit     = get_post_meta( $attachment_id, '_media_credit', true );
+	$attachment_source_url = get_post_meta( $attachment_id, 'arena_source_url', true );
+	$attachment_source_id  = get_post_meta( $attachment_id, 'arena_source_id', true );
+	$attachment_alt        = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
+	$attachment_caption    = $attachment->post_excerpt;
+
+	// Update the attachment credit.
+	if ( $credit && $credit !== $attachment_credit ) {
+		update_post_meta( $attachment_id, '_media_credit', $credit );
+	}
+
+	// Update the attachment source url.
+	if ( $source_url && $source_url !== $attachment_source_url ) {
+		update_post_meta( $attachment_id, 'arena_source_url', $source_url );
+	}
+
+	// Update the attachment source id.
+	if ( $source_id && $source_id !== $attachment_source_id ) {
+		update_post_meta( $attachment_id, 'arena_source_id', $source_id );
+	}
+
+	// Update the attachment alt.
+	if ( $alt && $alt !== $attachment_alt ) {
+		update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt );
+	}
+
+	// Update the attachment caption.
+	if ( $caption && $caption !== $attachment_caption ) {
+		wp_update_post( [
+			'ID'           => $attachment_id,
+			'post_excerpt' => $caption,
+		] );
+	}
+});
 
 /**
  * Set user avatar.
@@ -296,6 +455,7 @@ add_filter( 'wp_all_import_images_uploads_dir', function( $uploads, $articleData
 
 /**
  * Function handles downloading a remote file and inserting it into the WP Media Library.
+ * First checks if the image already exists by filename to avoid duplicates.
  *
  * @see https://developer.wordpress.org/reference/functions/media_handle_sideload/
  *
@@ -312,6 +472,24 @@ function arena_upload_to_media_library( $url, $post_id ) {
 		require_once( ABSPATH . 'wp-admin/includes/image.php' );
 	}
 
+	// Check if the image already exists by arena_source_url meta field.
+	$existing = get_posts([
+		'post_type'      => 'attachment',
+		'meta_key'       => 'arena_source_url',
+		'meta_value'     => $url,
+		'posts_per_page' => 1,
+		'fields'         => 'ids'
+	]);
+
+	// Get the first attachment ID.
+	$existing_id = $existing[0] ?? null;
+
+	// If existing, return the ID.
+	if ( $existing_id ) {
+		return (int) $existing_id;
+	}
+
+	// If we get here, the image doesn't exist, so proceed with download and upload.
 	// Build a temp url.
 	$tmp = download_url( $url );
 
@@ -325,10 +503,10 @@ function arena_upload_to_media_library( $url, $post_id ) {
 	}
 
 	// Build the file array.
-	$file_array = array(
+	$file_array = [
 		'name'     => basename( $url ),
 		'tmp_name' => $tmp,
-	);
+	];
 
 	// Add the image to the media library.
 	$id = media_handle_sideload( $file_array, $post_id );
