@@ -279,11 +279,11 @@ add_action( 'pmxi_saved_post', function( $post_id ) {
 	}
 
 	// Get the data.
-	$credit     = get_post_meta( $post_id, '_media_credit', true );
-	$source_url = get_post_meta( $post_id, 'arena_source_url', true );
-	$source_id  = get_post_meta( $post_id, 'arena_source_id', true );
-	$alt        = get_post_meta( $post_id, 'arena_alt', true );
-	$caption    = get_post_meta( $post_id, 'arena_caption', true );
+	$credit     = sanitize_text_field( get_post_meta( $post_id, '_media_credit', true ) );
+	$source_url = sanitize_text_field( get_post_meta( $post_id, 'arena_source_url', true ) );
+	$source_id  = sanitize_text_field( get_post_meta( $post_id, 'arena_source_id', true ) );
+	$alt        = sanitize_text_field( get_post_meta( $post_id, 'arena_alt', true ) );
+	$caption    = wp_kses_post( get_post_meta( $post_id, 'arena_caption', true ) );
 
 	// Bail if no credit or source url is found.
 	if ( ! ( $credit || $source_url || $source_id || $caption ) ) {
@@ -866,8 +866,8 @@ add_action( 'init', function() {
 			'not_found_in_trash' => __( 'No Arena Items found in Trash.', 'arena-importer' )
 		],
 		'menu_icon'          => 'dashicons-welcome-widgets-menus',
-		'public'             => true,
-		'publicly_queryable' => true,
+		'public'             => false,
+		'publicly_queryable' => false,
 		'show_in_menu'       => true,
 		'show_in_nav_menus'  => true,
 		'show_in_rest'       => true,
