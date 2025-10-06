@@ -231,6 +231,170 @@ class WPArena_CLI_Command {
 	// }
 
 	/**
+	 * Remove duplicate posts.
+	 *
+	 * 1. Finds posts that have -2, -3, -4, as the last three characters in the post_name (slug)
+	 * 2. Finds the original post by removing the last three characters from the post_name (slug)
+	 * 3. Logs all the findings (post IDs and urls)
+	 * 3. Deletes the duplicate posts if not in dry run mode
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--limit=<number>]
+	 * : Limit the number of posts to process (default: 100).
+	 *
+	 * [--offset=<number>]
+	 * : Number of posts to skip before processing (default: 0).
+	 *
+	 * [--post_type=<post_type>]
+	 * : The post type to process. Default: 'post'.
+	 *
+	 * [--dry-run]
+	 * : Only list posts that would be deleted. No changes will be made.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     # Preview posts that would be deleted without making changes.
+	 *     wp arena remove-duplicate-posts --dry-run
+	 *
+	 *     # Process first 1000 posts.
+	 *     wp arena remove-duplicate-posts --limit=1000 --offset=0
+	 *
+	 *     # Process next 1000 posts.
+	 *     wp arena remove-duplicate-posts --limit=1000 --offset=1000
+	 *
+	 *     # Process pages instead of posts.
+	 *     wp arena remove-duplicate-posts --post_type=page --dry-run
+	 *
+	 *     # Actually delete posts (default: 100 posts).
+	 *     wp arena remove-duplicate-posts
+	 *
+	 * @subcommand remove-duplicate-posts
+	 * @param array $args
+	 * @param array $assoc_args
+	 *
+	 * @return void
+	*/
+	public function remove_duplicate_posts( $args, $assoc_args ) {
+		$post_type = isset( $assoc_args['post_type'] ) ? $assoc_args['post_type'] : 'post';
+		$limit     = isset( $assoc_args['limit'] ) ? (int) $assoc_args['limit'] : 100;
+		$offset    = isset( $assoc_args['offset'] ) ? (int) $assoc_args['offset'] : 0;
+		$dry_run   = isset( $assoc_args['dry-run'] );
+
+		try {
+			global $wpdb;
+
+			WP_CLI::log( "Finding duplicate posts with slugs ending in -2, -3, -4, etc..." );
+
+			// SQL query to find posts with slugs ending in -2, -3, -4, etc.
+			$duplicate_sql = $wpdb->prepare( "
+				SELECT ID, post_name, post_title, post_date
+				FROM {$wpdb->posts}
+				WHERE post_type = %s
+				AND post_status = 'publish'
+				AND post_name REGEXP '-[0-9]+$'
+				ORDER BY post_name
+				LIMIT %d OFFSET %d
+			", $post_type, $limit, $offset );
+
+			$duplicates = $wpdb->get_results( $duplicate_sql );
+
+			if ( empty( $duplicates ) ) {
+				WP_CLI::success( "No duplicate posts found." );
+				return;
+			}
+
+			WP_CLI::log( sprintf( "Found %d potential duplicate posts.", count( $duplicates ) ) );
+
+			$deleted_count = 0;
+			$skipped_count = 0;
+
+			foreach ( $duplicates as $duplicate ) {
+				// Remove the suffix (-2, -3, etc.) to get the original slug
+				$original_slug = preg_replace( '/-[0-9]+$/', '', $duplicate->post_name );
+
+				// Find the original post
+				$original_sql = $wpdb->prepare( "
+					SELECT ID, post_name, post_title, post_date
+					FROM {$wpdb->posts}
+					WHERE post_type = %s
+					AND post_status = 'publish'
+					AND post_name = %s
+					LIMIT 1
+				", $post_type, $original_slug );
+
+				$original = $wpdb->get_row( $original_sql );
+
+				if ( $original ) {
+					// Only delete if duplicate and original have the same date/time
+					if ( $duplicate->post_date === $original->post_date ) {
+						// // Log the findings
+						// WP_CLI::log( sprintf(
+						// 	"Duplicate: ID %d (%s) -- %s | Original: ID %d (%s) -- %s",
+						// 	$duplicate->ID,
+						// 	$duplicate->post_date,
+						// 	get_permalink( $duplicate->ID ),
+						// 	$original->ID,
+						// 	$original->post_date,
+						// 	get_permalink( $original->ID )
+						// ) );
+
+						if ( ! $dry_run ) {
+							$permalink = get_permalink( $duplicate->ID );
+
+							// Delete the duplicate post (the one with -2, -3, etc.)
+							$deleted = wp_delete_post( $duplicate->ID, true );
+
+							if ( $deleted ) {
+								$deleted_count++;
+								WP_CLI::log( sprintf( "✓ Deleted duplicate post ID %d -- %s", $duplicate->ID, $permalink ) );
+							} else {
+								WP_CLI::warning( sprintf( "Failed to delete duplicate post ID %d -- %s", $duplicate->ID, $permalink ) );
+							}
+						} else {
+							$deleted_count++;
+							WP_CLI::log( sprintf( "[DRY RUN] Would delete duplicate post ID %d -- %s", $duplicate->ID, $permalink ) );
+						}
+					} else {
+						$skipped_count++;
+						WP_CLI::log( sprintf(
+							"⚠ Skipped: Duplicate post ID %d (%s) has different date than original (%s) -- %s",
+							$duplicate->ID,
+							$duplicate->post_date,
+							$original->post_date,
+							get_permalink( $duplicate->ID )
+						) );
+					}
+				} else {
+					$skipped_count++;
+					WP_CLI::log( sprintf(
+						"⚠ Skipped: No original post found for duplicate %d -- %s",
+						$duplicate->ID,
+						get_permalink( $duplicate->ID )
+					) );
+				}
+			}
+
+			// Summary
+			if ( $dry_run ) {
+				WP_CLI::success( sprintf(
+					"Dry run complete. Would delete %d duplicate posts, skipped %d posts.",
+					$deleted_count,
+					$skipped_count
+				) );
+			} else {
+				WP_CLI::success( sprintf(
+					"Complete. Deleted %d duplicate posts, skipped %d posts.",
+					$deleted_count,
+					$skipped_count
+				) );
+			}
+		} catch ( Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	/**
 	 * Update content images.
 	 *
 	 * This command scans all posts and updates the content to add the `wp-image-{$image_id}` class to the images.
