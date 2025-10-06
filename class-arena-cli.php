@@ -471,11 +471,11 @@ class WPArena_CLI_Command {
 
 						// Loop through tags.
 						while ( $tags->next_tag( [ 'tag_name' => 'img' ] ) ) {
-							// $class = (string) $tags->get_attribute( 'class' );
-							$src = (string) $tags->get_attribute( 'src' );
+							$src    = (string) $tags->get_attribute( 'src' );
+							$srcset = (string) $tags->get_attribute( 'srcset' );
 
-							// Skip if no src.
-							if ( empty( $src ) ) {
+							// Skip if no src or we already have srcset.
+							if ( empty( $src ) || $srcset ) {
 								$skipped_imgs++;
 								continue;
 							}
