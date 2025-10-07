@@ -310,6 +310,8 @@ class WPArena_CLI_Command {
 			$skipped_count = 0;
 
 			foreach ( $duplicates as $duplicate ) {
+				$permalink = get_permalink( $duplicate->ID );
+
 				// Remove the suffix (-2, -3, etc.) to get the original slug
 				$original_slug = preg_replace( '/-[0-9]+$/', '', $duplicate->post_name );
 
@@ -344,8 +346,6 @@ class WPArena_CLI_Command {
 						// ) );
 
 						if ( ! $dry_run ) {
-							$permalink = get_permalink( $duplicate->ID );
-
 							// Delete the duplicate post (the one with -2, -3, etc.)
 							$deleted = wp_delete_post( $duplicate->ID, true );
 
