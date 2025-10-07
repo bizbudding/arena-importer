@@ -326,8 +326,12 @@ class WPArena_CLI_Command {
 				$original = $wpdb->get_row( $original_sql );
 
 				if ( $original ) {
-					// Only delete if duplicate and original have the same date/time
-					if ( $duplicate->post_date === $original->post_date ) {
+					// Only delete if duplicate and original are within the same hour
+					$duplicate_timestamp = strtotime( $duplicate->post_date );
+					$original_timestamp  = strtotime( $original->post_date );
+					$time_diff           = abs( $duplicate_timestamp - $original_timestamp );
+
+					if ( $time_diff < 3600 ) { // Within 1 hour (3600 seconds)
 						// // Log the findings
 						// WP_CLI::log( sprintf(
 						// 	"Duplicate: ID %d (%s) -- %s | Original: ID %d (%s) -- %s",
@@ -358,7 +362,7 @@ class WPArena_CLI_Command {
 					} else {
 						$skipped_count++;
 						WP_CLI::log( sprintf(
-							"⚠ Skipped: Duplicate post ID %d (%s) has different date than original (%s) -- %s",
+							"⚠ Skipped: Duplicate post ID %d (%s) is more than 1 hour apart from original (%s) -- %s",
 							$duplicate->ID,
 							$duplicate->post_date,
 							$original->post_date,
@@ -367,11 +371,11 @@ class WPArena_CLI_Command {
 					}
 				} else {
 					$skipped_count++;
-					WP_CLI::log( sprintf(
-						"⚠ Skipped: No original post found for duplicate %d -- %s",
-						$duplicate->ID,
-						get_permalink( $duplicate->ID )
-					) );
+					// WP_CLI::log( sprintf(
+					// 	"⚠ Skipped: No original post found for duplicate %d -- %s",
+					// 	$duplicate->ID,
+					// 	get_permalink( $duplicate->ID )
+					// ) );
 				}
 			}
 
