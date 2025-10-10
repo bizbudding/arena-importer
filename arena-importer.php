@@ -847,7 +847,7 @@ function arena_write_to_file( $value ) {
 add_action( 'init', function() {
 
 	register_post_type( 'arena_item', [
-		'exclude_from_search' => true,
+		'exclude_from_search' => false,
 		'has_archive'         => false,
 		'hierarchical'        => false,
 		'labels'              => [
